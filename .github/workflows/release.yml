@@ -4,14 +4,58 @@ on:
   push:
     tags:
       - 'v*' # Trigger on tags starting with v, e.g., v1.0.0, v1.0.0-rc.1
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v1.1.3 or v1.1.3-rc.1)'
+        required: true
+        type: string
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref }}
   cancel-in-progress: false
 
 jobs:
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      is_prerelease: ${{ steps.resolve.outputs.is_prerelease }}
+    steps:
+      - name: Resolve version
+        id: resolve
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME}"
+          fi
+
+          # Normalize: allow "1.2.3" or "v1.2.3"
+          VERSION="${VERSION#v}"
+          VERSION="v${VERSION}"
+
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-].*)?$ ]]; then
+            echo "::error::Invalid version '${VERSION}'. Expected semver like v1.2.3 or v1.2.3-rc.1"
+            exit 1
+          fi
+
+          if [[ "$VERSION" == *"-"* ]]; then
+            IS_PRERELEASE=true
+          else
+            IS_PRERELEASE=false
+          fi
+
+          {
+            echo "version=${VERSION}"
+            echo "is_prerelease=${IS_PRERELEASE}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing ${VERSION} (prerelease=${IS_PRERELEASE})"
+
   build-binaries:
     name: Build Binaries
+    needs: prepare
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -53,35 +97,35 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          VERSION=${GITHUB_REF_NAME}
           GIT_COMMIT=${GITHUB_SHA::8}
           BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-          
+
           OUTPUT_NAME=resin-${GOOS}-${GOARCH}
           if [ "$GOOS" = "windows" ]; then
             OUTPUT_NAME="${OUTPUT_NAME}.exe"
           fi
           echo "OUTPUT_NAME=${OUTPUT_NAME}" >> $GITHUB_ENV
-          
+
           mkdir -p build
-          
+
           go build -trimpath -tags "with_quic with_wireguard with_grpc with_utls with_embedded_tor with_naive_outbound" \
             -ldflags="-s -w \
             -X github.com/Resinat/Resin/internal/buildinfo.Version=${VERSION} \
             -X github.com/Resinat/Resin/internal/buildinfo.GitCommit=${GIT_COMMIT} \
             -X github.com/Resinat/Resin/internal/buildinfo.BuildTime=${BUILD_TIME}" \
             -o build/${OUTPUT_NAME} ./cmd/resin
-            
+
           cd build
-          
+
           # Create a copy with the simple name for the archive
           SIMPLE_NAME="resin"
           if [ "$GOOS" = "windows" ]; then
             SIMPLE_NAME="resin.exe"
           fi
           cp ${OUTPUT_NAME} ${SIMPLE_NAME}
-          
+
           if [ "$GOOS" = "windows" ]; then
             zip resin-${GOOS}-${GOARCH}.zip ${SIMPLE_NAME}
             PACKAGE_NAME="resin-${GOOS}-${GOARCH}.zip"
@@ -89,7 +133,7 @@ jobs:
             tar -czvf resin-${GOOS}-${GOARCH}.tar.gz ${SIMPLE_NAME}
             PACKAGE_NAME="resin-${GOOS}-${GOARCH}.tar.gz"
           fi
-          
+
           # Remove simple name copy to avoid confusion
           rm ${SIMPLE_NAME}
           echo "PACKAGE_NAME=${PACKAGE_NAME}" >> $GITHUB_ENV
@@ -112,7 +156,7 @@ jobs:
   publish-release:
     name: Publish Release
     runs-on: ubuntu-latest
-    needs: build-binaries
+    needs: [prepare, build-binaries]
     permissions:
       contents: write
     steps:
@@ -123,28 +167,20 @@ jobs:
           path: build
           merge-multiple: true
 
-      - name: Check if Pre-release
-        id: check_prerelease
-        run: |
-          if [[ "${GITHUB_REF_NAME}" == *"-"* ]]; then
-            echo "is_prerelease=true" >> $GITHUB_OUTPUT
-          else
-            echo "is_prerelease=false" >> $GITHUB_OUTPUT
-          fi
-
       - name: Publish Release Assets
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.prepare.outputs.version }}
           files: build/*
           fail_on_unmatched_files: true
           overwrite_files: true
           generate_release_notes: true
-          prerelease: ${{ steps.check_prerelease.outputs.is_prerelease == 'true' }}
+          prerelease: ${{ needs.prepare.outputs.is_prerelease == 'true' }}
 
   docker:
     name: Build & Push Docker Image
     runs-on: ubuntu-latest
-    needs: build-binaries
+    needs: [prepare, build-binaries]
     permissions:
       contents: read
       packages: write
@@ -181,24 +217,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Check if Pre-release
-        id: check_prerelease
-        run: |
-          if [[ "${GITHUB_REF_NAME}" == *"-"* ]]; then
-            echo "is_prerelease=true" >> $GITHUB_OUTPUT
-          else
-            echo "is_prerelease=false" >> $GITHUB_OUTPUT
-          fi
-
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ steps.check_prerelease.outputs.is_prerelease == 'false' }}
+            type=semver,pattern={{version}},value=${{ needs.prepare.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.prepare.outputs.version }}
+            type=raw,value=latest,enable=${{ needs.prepare.outputs.is_prerelease == 'false' }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
