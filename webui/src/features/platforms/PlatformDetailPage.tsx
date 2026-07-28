@@ -46,7 +46,7 @@ import {
 } from "./formModel";
 import { PlatformAccessPanel } from "./PlatformAccessPanel";
 import { PlatformMonitorPanel } from "./PlatformMonitorPanel";
-import type { PlatformLease } from "./types";
+import type { PlatformLease, PlatformLeaseSortBy, SortOrder } from "./types";
 
 type PlatformDetailTab = "monitor" | "access" | "config" | "ops";
 
@@ -60,6 +60,13 @@ const DETAIL_TABS: Array<{ key: PlatformDetailTab; label: string; hint: string }
   { key: "ops", label: "运维", hint: "重置、清租约、删除操作" },
 ];
 
+function leaseSortIndicator(active: boolean, order: SortOrder): string {
+  if (!active) {
+    return "↕";
+  }
+  return order === "asc" ? "▲" : "▼";
+}
+
 export function PlatformDetailPage() {
   const { t } = useI18n();
   const { platformId = "" } = useParams();
@@ -70,6 +77,8 @@ export function PlatformDetailPage() {
   const [leasePageSize, setLeasePageSize] = useState<number>(LEASE_PAGE_SIZE_OPTIONS[0]);
   const [leaseAccountFilter, setLeaseAccountFilter] = useState("");
   const [debouncedLeaseAccountFilter, setDebouncedLeaseAccountFilter] = useState("");
+  const [leaseSortBy, setLeaseSortBy] = useState<PlatformLeaseSortBy>("expiry");
+  const [leaseSortOrder, setLeaseSortOrder] = useState<SortOrder>("asc");
   const { toasts, showToast, dismissToast } = useToast();
   const queryClient = useQueryClient();
   const formatPlatformMutationError = (error: unknown) => {
@@ -93,7 +102,15 @@ export function PlatformDetailPage() {
   const leaseAccountKeyword = debouncedLeaseAccountFilter.trim();
 
   const leaseQuery = useQuery({
-    queryKey: ["platform-leases", platform?.id, leasePage, leasePageSize, leaseAccountKeyword],
+    queryKey: [
+      "platform-leases",
+      platform?.id,
+      leasePage,
+      leasePageSize,
+      leaseAccountKeyword,
+      leaseSortBy,
+      leaseSortOrder,
+    ],
     queryFn: () => {
       if (!platform) {
         throw new Error("平台不存在或已被删除");
@@ -103,8 +120,8 @@ export function PlatformDetailPage() {
         offset: leasePage * leasePageSize,
         account: leaseAccountKeyword || undefined,
         fuzzy: leaseAccountKeyword ? true : undefined,
-        sort_by: "expiry",
-        sort_order: "asc",
+        sort_by: leaseSortBy,
+        sort_order: leaseSortOrder,
       });
     },
     enabled: Boolean(platform?.id) && activeTab === "ops",
@@ -138,6 +155,8 @@ export function PlatformDetailPage() {
     setLeasePage(0);
     setLeaseAccountFilter("");
     setDebouncedLeaseAccountFilter("");
+    setLeaseSortBy("expiry");
+    setLeaseSortOrder("asc");
   }, [platformId]);
 
   useEffect(() => {
@@ -149,7 +168,7 @@ export function PlatformDetailPage() {
 
   useEffect(() => {
     setLeasePage(0);
-  }, [debouncedLeaseAccountFilter]);
+  }, [debouncedLeaseAccountFilter, leaseSortBy, leaseSortOrder]);
 
   useEffect(() => {
     const maxPage = Math.max(0, Math.ceil(leasesPage.total / leasePageSize) - 1);
@@ -319,10 +338,26 @@ export function PlatformDetailPage() {
     setLeasePage(0);
   };
 
+  const changeLeaseSort = (target: PlatformLeaseSortBy) => {
+    if (leaseSortBy === target) {
+      setLeaseSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setLeaseSortBy(target);
+      // 时间类字段默认最近优先，账号默认升序
+      setLeaseSortOrder(target === "account" ? "asc" : "desc");
+    }
+    setLeasePage(0);
+  };
+
   const leaseColumns: ColumnDef<PlatformLease>[] = [
     {
       accessorKey: "account",
-      header: t("账号"),
+      header: () => (
+        <button type="button" className="table-sort-btn" onClick={() => changeLeaseSort("account")}>
+          {t("账号")}
+          <span>{leaseSortIndicator(leaseSortBy === "account", leaseSortOrder)}</span>
+        </button>
+      ),
       cell: ({ row }) => (
         <span className="lease-account-cell" title={row.original.account}>
           {row.original.account || "-"}
@@ -349,12 +384,22 @@ export function PlatformDetailPage() {
     },
     {
       accessorKey: "expiry",
-      header: t("过期时间"),
+      header: () => (
+        <button type="button" className="table-sort-btn" onClick={() => changeLeaseSort("expiry")}>
+          {t("过期时间")}
+          <span>{leaseSortIndicator(leaseSortBy === "expiry", leaseSortOrder)}</span>
+        </button>
+      ),
       cell: ({ row }) => formatDateTime(row.original.expiry),
     },
     {
       accessorKey: "last_accessed",
-      header: t("最后访问"),
+      header: () => (
+        <button type="button" className="table-sort-btn" onClick={() => changeLeaseSort("last_accessed")}>
+          {t("最后访问")}
+          <span>{leaseSortIndicator(leaseSortBy === "last_accessed", leaseSortOrder)}</span>
+        </button>
+      ),
       cell: ({ row }) => formatDateTime(row.original.last_accessed),
     },
     {
