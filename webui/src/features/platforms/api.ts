@@ -149,6 +149,14 @@ export async function listPlatformLeases(id: string, input: ListPlatformLeasesIn
   if (account) {
     query.set("account", account);
   }
+  const node = input.node?.trim();
+  if (node) {
+    query.set("node", node);
+  }
+  const egressIP = input.egress_ip?.trim();
+  if (egressIP) {
+    query.set("egress_ip", egressIP);
+  }
   if (input.fuzzy !== undefined) {
     query.set("fuzzy", String(input.fuzzy));
   }

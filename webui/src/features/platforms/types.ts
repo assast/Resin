@@ -65,6 +65,8 @@ export type ListPlatformLeasesInput = {
   limit?: number;
   offset?: number;
   account?: string;
+  node?: string;
+  egress_ip?: string;
   fuzzy?: boolean;
   sort_by?: PlatformLeaseSortBy;
   sort_order?: SortOrder;

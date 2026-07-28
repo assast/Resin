@@ -610,6 +610,76 @@ func TestAPIContract_ListLeases_FuzzyValidation(t *testing.T) {
 	assertErrorCode(t, rec, "INVALID_ARGUMENT")
 }
 
+func TestAPIContract_ListLeases_NodeAndEgressIPFilter(t *testing.T) {
+	srv, cp, _ := newControlPlaneTestServer(t)
+
+	platformID := mustCreatePlatform(t, srv, "lease-node-egress-filter")
+
+	subA := subscription.NewSubscription("sub-a", "HK-Provider", "https://example.com/sub-a", true, false)
+	subA.CreatedAtNs = 100
+	managedA := subscription.NewManagedNodes()
+	hashA := node.HashFromRawOptions([]byte(`{"type":"ss","server":"203.0.113.20","port":443}`))
+	managedA.StoreNode(hashA, subscription.ManagedNode{Tags: []string{"edge-a"}})
+	subA.SwapManagedNodes(managedA)
+
+	subB := subscription.NewSubscription("sub-b", "US-Provider", "https://example.com/sub-b", true, false)
+	subB.CreatedAtNs = 200
+	managedB := subscription.NewManagedNodes()
+	hashB := node.HashFromRawOptions([]byte(`{"type":"ss","server":"203.0.113.21","port":443}`))
+	managedB.StoreNode(hashB, subscription.ManagedNode{Tags: []string{"edge-b"}})
+	subB.SwapManagedNodes(managedB)
+
+	cp.SubMgr.Register(subA)
+	cp.SubMgr.Register(subB)
+	cp.Pool.AddNodeFromSub(hashA, json.RawMessage(`{"type":"ss","server":"203.0.113.20","port":443}`), subA.ID)
+	cp.Pool.AddNodeFromSub(hashB, json.RawMessage(`{"type":"ss","server":"203.0.113.21","port":443}`), subB.ID)
+
+	now := time.Now().UnixNano()
+	cp.Router.RestoreLeases([]model.Lease{
+		{
+			PlatformID:     platformID,
+			Account:        "acct-a",
+			NodeHash:       hashA.Hex(),
+			EgressIP:       "203.0.113.20",
+			ExpiryNs:       now + int64(time.Hour),
+			LastAccessedNs: now,
+		},
+		{
+			PlatformID:     platformID,
+			Account:        "acct-b",
+			NodeHash:       hashB.Hex(),
+			EgressIP:       "198.51.100.30",
+			ExpiryNs:       now + int64(time.Hour),
+			LastAccessedNs: now,
+		},
+	})
+
+	assertSingleLeaseAccount := func(t *testing.T, path, wantAccount string) {
+		t.Helper()
+		rec := doJSONRequest(t, srv, http.MethodGet, path, nil, true)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list leases status: got %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+		body := decodeJSONMap(t, rec)
+		items, ok := body["items"].([]any)
+		if !ok {
+			t.Fatalf("leases items type: got %T", body["items"])
+		}
+		if len(items) != 1 {
+			t.Fatalf("leases items len: got %d, want 1, body=%s", len(items), rec.Body.String())
+		}
+		row, ok := items[0].(map[string]any)
+		if !ok || row["account"] != wantAccount {
+			t.Fatalf("lease account: got %#v, want %q", items[0], wantAccount)
+		}
+	}
+
+	assertSingleLeaseAccount(t, "/api/v1/platforms/"+platformID+"/leases?node=edge-a&fuzzy=true", "acct-a")
+	assertSingleLeaseAccount(t, "/api/v1/platforms/"+platformID+"/leases?node="+hashB.Hex(), "acct-b")
+	assertSingleLeaseAccount(t, "/api/v1/platforms/"+platformID+"/leases?egress_ip=198.51&fuzzy=true", "acct-b")
+	assertSingleLeaseAccount(t, "/api/v1/platforms/"+platformID+"/leases?node=edge&egress_ip=203.0&fuzzy=true", "acct-a")
+}
+
 func TestAPIContract_PaginationAndSorting(t *testing.T) {
 	srv, _, _ := newControlPlaneTestServer(t)
 

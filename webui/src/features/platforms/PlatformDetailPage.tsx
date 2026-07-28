@@ -77,6 +77,10 @@ export function PlatformDetailPage() {
   const [leasePageSize, setLeasePageSize] = useState<number>(LEASE_PAGE_SIZE_OPTIONS[0]);
   const [leaseAccountFilter, setLeaseAccountFilter] = useState("");
   const [debouncedLeaseAccountFilter, setDebouncedLeaseAccountFilter] = useState("");
+  const [leaseNodeFilter, setLeaseNodeFilter] = useState("");
+  const [debouncedLeaseNodeFilter, setDebouncedLeaseNodeFilter] = useState("");
+  const [leaseEgressIPFilter, setLeaseEgressIPFilter] = useState("");
+  const [debouncedLeaseEgressIPFilter, setDebouncedLeaseEgressIPFilter] = useState("");
   const [leaseSortBy, setLeaseSortBy] = useState<PlatformLeaseSortBy>("expiry");
   const [leaseSortOrder, setLeaseSortOrder] = useState<SortOrder>("asc");
   const { toasts, showToast, dismissToast } = useToast();
@@ -100,6 +104,9 @@ export function PlatformDetailPage() {
   const platform = platformQuery.data ?? null;
 
   const leaseAccountKeyword = debouncedLeaseAccountFilter.trim();
+  const leaseNodeKeyword = debouncedLeaseNodeFilter.trim();
+  const leaseEgressIPKeyword = debouncedLeaseEgressIPFilter.trim();
+  const hasLeaseFilter = Boolean(leaseAccountKeyword || leaseNodeKeyword || leaseEgressIPKeyword);
 
   const leaseQuery = useQuery({
     queryKey: [
@@ -108,6 +115,8 @@ export function PlatformDetailPage() {
       leasePage,
       leasePageSize,
       leaseAccountKeyword,
+      leaseNodeKeyword,
+      leaseEgressIPKeyword,
       leaseSortBy,
       leaseSortOrder,
     ],
@@ -119,7 +128,9 @@ export function PlatformDetailPage() {
         limit: leasePageSize,
         offset: leasePage * leasePageSize,
         account: leaseAccountKeyword || undefined,
-        fuzzy: leaseAccountKeyword ? true : undefined,
+        node: leaseNodeKeyword || undefined,
+        egress_ip: leaseEgressIPKeyword || undefined,
+        fuzzy: hasLeaseFilter ? true : undefined,
         sort_by: leaseSortBy,
         sort_order: leaseSortOrder,
       });
@@ -155,6 +166,10 @@ export function PlatformDetailPage() {
     setLeasePage(0);
     setLeaseAccountFilter("");
     setDebouncedLeaseAccountFilter("");
+    setLeaseNodeFilter("");
+    setDebouncedLeaseNodeFilter("");
+    setLeaseEgressIPFilter("");
+    setDebouncedLeaseEgressIPFilter("");
     setLeaseSortBy("expiry");
     setLeaseSortOrder("asc");
   }, [platformId]);
@@ -167,8 +182,28 @@ export function PlatformDetailPage() {
   }, [leaseAccountFilter]);
 
   useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedLeaseNodeFilter(leaseNodeFilter);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [leaseNodeFilter]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedLeaseEgressIPFilter(leaseEgressIPFilter);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [leaseEgressIPFilter]);
+
+  useEffect(() => {
     setLeasePage(0);
-  }, [debouncedLeaseAccountFilter, leaseSortBy, leaseSortOrder]);
+  }, [
+    debouncedLeaseAccountFilter,
+    debouncedLeaseNodeFilter,
+    debouncedLeaseEgressIPFilter,
+    leaseSortBy,
+    leaseSortOrder,
+  ]);
 
   useEffect(() => {
     const maxPage = Math.max(0, Math.ceil(leasesPage.total / leasePageSize) - 1);
@@ -785,11 +820,11 @@ export function PlatformDetailPage() {
                       <h4>{t("租约管理")}</h4>
                       <p>{t("查看当前平台的租约绑定，并按账号释放单个租约。")}</p>
                     </div>
-                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
                       <label
                         className="search-box"
                         htmlFor="platform-lease-account-search"
-                        style={{ maxWidth: 220, margin: 0, gap: 6 }}
+                        style={{ maxWidth: 180, margin: 0, gap: 6 }}
                       >
                         <Search size={16} />
                         <Input
@@ -798,6 +833,36 @@ export function PlatformDetailPage() {
                           value={leaseAccountFilter}
                           onChange={(event) => setLeaseAccountFilter(event.target.value)}
                           aria-label={t("按账号筛选租约")}
+                          style={{ padding: "6px 10px", borderRadius: 8 }}
+                        />
+                      </label>
+                      <label
+                        className="search-box"
+                        htmlFor="platform-lease-node-search"
+                        style={{ maxWidth: 180, margin: 0, gap: 6 }}
+                      >
+                        <Search size={16} />
+                        <Input
+                          id="platform-lease-node-search"
+                          placeholder={t("搜索节点")}
+                          value={leaseNodeFilter}
+                          onChange={(event) => setLeaseNodeFilter(event.target.value)}
+                          aria-label={t("按节点筛选租约")}
+                          style={{ padding: "6px 10px", borderRadius: 8 }}
+                        />
+                      </label>
+                      <label
+                        className="search-box"
+                        htmlFor="platform-lease-egress-ip-search"
+                        style={{ maxWidth: 180, margin: 0, gap: 6 }}
+                      >
+                        <Search size={16} />
+                        <Input
+                          id="platform-lease-egress-ip-search"
+                          placeholder={t("搜索出口 IP")}
+                          value={leaseEgressIPFilter}
+                          onChange={(event) => setLeaseEgressIPFilter(event.target.value)}
+                          aria-label={t("按出口 IP 筛选租约")}
                           style={{ padding: "6px 10px", borderRadius: 8 }}
                         />
                       </label>
@@ -825,7 +890,7 @@ export function PlatformDetailPage() {
                   {!leaseQuery.isLoading && !leases.length ? (
                     <div className="empty-box">
                       <Sparkles size={16} />
-                      <p>{leaseAccountKeyword ? t("当前筛选无匹配租约") : t("当前平台暂无租约")}</p>
+                      <p>{hasLeaseFilter ? t("当前筛选无匹配租约") : t("当前平台暂无租约")}</p>
                     </div>
                   ) : null}
 

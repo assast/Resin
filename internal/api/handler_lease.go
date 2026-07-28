@@ -47,6 +47,55 @@ func sortIPLoadEntries(entries []service.IPLoadEntry, sorting Sorting) {
 	})
 }
 
+func matchLeaseText(value, keyword string, fuzzy bool) bool {
+	if fuzzy {
+		return strings.Contains(strings.ToLower(value), strings.ToLower(keyword))
+	}
+	return value == keyword
+}
+
+func matchLeaseNode(lease service.LeaseResponse, keyword string, fuzzy bool) bool {
+	return matchLeaseText(lease.NodeTag, keyword, fuzzy) || matchLeaseText(lease.NodeHash, keyword, fuzzy)
+}
+
+func parseOptionalLeaseFilter(w http.ResponseWriter, r *http.Request, name string) (string, bool) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		return "", true
+	}
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		writeInvalidArgument(w, name+" query: must be non-empty when provided")
+		return "", false
+	}
+	return value, true
+}
+
+func filterLeases(
+	leases []service.LeaseResponse,
+	account, node, egressIP string,
+	fuzzy bool,
+) []service.LeaseResponse {
+	if account == "" && node == "" && egressIP == "" {
+		return leases
+	}
+
+	filtered := make([]service.LeaseResponse, 0, len(leases))
+	for _, lease := range leases {
+		if account != "" && !matchLeaseText(lease.Account, account, fuzzy) {
+			continue
+		}
+		if node != "" && !matchLeaseNode(lease, node, fuzzy) {
+			continue
+		}
+		if egressIP != "" && !matchLeaseText(lease.EgressIP, egressIP, fuzzy) {
+			continue
+		}
+		filtered = append(filtered, lease)
+	}
+	return filtered
+}
+
 // HandleListLeases returns a handler for GET /api/v1/platforms/{id}/leases.
 func HandleListLeases(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -65,32 +114,21 @@ func HandleListLeases(cp *service.ControlPlaneService) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		useFuzzyAccountMatch := fuzzy != nil && *fuzzy
+		useFuzzyMatch := fuzzy != nil && *fuzzy
 
-		// Optional account filter.
-		if raw := r.URL.Query().Get("account"); raw != "" {
-			account := strings.TrimSpace(raw)
-			if account == "" {
-				writeInvalidArgument(w, "account query: must be non-empty when provided")
-				return
-			}
-			filtered := make([]service.LeaseResponse, 0, len(leases))
-			if useFuzzyAccountMatch {
-				accountLower := strings.ToLower(account)
-				for _, l := range leases {
-					if strings.Contains(strings.ToLower(l.Account), accountLower) {
-						filtered = append(filtered, l)
-					}
-				}
-			} else {
-				for _, l := range leases {
-					if l.Account == account {
-						filtered = append(filtered, l)
-					}
-				}
-			}
-			leases = filtered
+		account, ok := parseOptionalLeaseFilter(w, r, "account")
+		if !ok {
+			return
 		}
+		node, ok := parseOptionalLeaseFilter(w, r, "node")
+		if !ok {
+			return
+		}
+		egressIP, ok := parseOptionalLeaseFilter(w, r, "egress_ip")
+		if !ok {
+			return
+		}
+		leases = filterLeases(leases, account, node, egressIP, useFuzzyMatch)
 
 		sorting, ok := parseSortingOrWriteInvalid(w, r, []string{"account", "expiry", "last_accessed"}, "expiry", "asc")
 		if !ok {
