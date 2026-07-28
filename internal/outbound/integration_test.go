@@ -3,7 +3,6 @@ package outbound_test
 import (
 	"encoding/json"
 	"net/netip"
-	"regexp"
 	"testing"
 	"time"
 
@@ -37,7 +36,7 @@ func TestEndToEnd_NodeEnterRoutableView(t *testing.T) {
 	})
 
 	// Register a platform with no regex/region filters.
-	platCfg := platform.NewPlatform("test-plat-id", "test-plat", []*regexp.Regexp{}, []string{})
+	platCfg := platform.NewPlatform("test-plat-id", "test-plat", nil, []string{})
 	pool.RegisterPlatform(platCfg)
 
 	// Register subscription and set its managed nodes.

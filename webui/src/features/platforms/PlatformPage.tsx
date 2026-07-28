@@ -345,8 +345,8 @@ export function PlatformPage() {
                   <span>{t("节点名正则过滤规则（可选）")}</span>
                   <span
                     className="subscription-info-icon"
-                    title={t("满足所有正则表达式的节点才会被选择")}
-                    aria-label={t("满足所有正则表达式的节点才会被选择")}
+                    title={t("正选需全部满足；! 开头为排除规则")}
+                    aria-label={t("正选需全部满足；! 开头为排除规则")}
                     tabIndex={0}
                   >
                     <Info size={13} />
@@ -355,10 +355,13 @@ export function PlatformPage() {
                 <Textarea
                   id="create-regex"
                   rows={4}
-                  placeholder={t("每行一条，例如 .*专线.* 或 <订阅名>/.*")}
+                  placeholder={t("每行一条，例如 ^Provider/.*、.*香港.* 或 !.*试用.*")}
                   {...createForm.register("regex_filters_text")}
                 />
                 <p className="muted" style={{ marginTop: 4, fontSize: 12 }}>
+                  {t("匹配对象为 <订阅名>/<节点名>。正选多条需同时满足（AND）；以 ! 开头可排除（如 !.*试用.* 或 !MySub/节点A），可与正选混用：先正选再排除。")}
+                </p>
+                <p className="muted" style={{ marginTop: 2, fontSize: 12 }}>
                   {t("技巧：<订阅名>/.* 可筛选来自该订阅的节点。")}
                 </p>
               </div>

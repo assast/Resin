@@ -158,6 +158,14 @@ us
 hk
 ```
 
+You can also filter by node name regex. Matching form is `<SubscriptionName>/<tag>`. Multiple include rules are AND; prefix a line with `!` to exclude nodes (node-level hard exclude):
+
+```
+^Provider/.*
+!.*trial.*
+!Provider/HK-01
+```
+
 For forward proxy (HTTP / SOCKS5), include Platform in the auth info. Examples:
 
 ```bash

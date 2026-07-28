@@ -432,7 +432,7 @@ func TestPool_RegexFilteredPlatform(t *testing.T) {
 	pool := newTestPool(subMgr)
 
 	// Platform with "us" regex filter.
-	plat := platform.NewPlatform("p1", "US-Only", []*regexp.Regexp{regexp.MustCompile("us")}, nil)
+	plat := platform.NewPlatform("p1", "US-Only", platform.PositiveRegexFilters(regexp.MustCompile("us")), nil)
 	pool.RegisterPlatform(plat)
 
 	h1 := node.HashFromRawOptions([]byte(`{"type":"ss","n":"us"}`))
@@ -765,7 +765,7 @@ func TestPool_ReplacePlatform_RebuildsViewBeforePublish(t *testing.T) {
 	nextPlat := platform.NewPlatform(
 		"p-rebuild",
 		"New",
-		[]*regexp.Regexp{regexp.MustCompile("us")},
+		platform.PositiveRegexFilters(regexp.MustCompile("us")),
 		nil,
 	)
 	if err := pool.ReplacePlatform(nextPlat); err != nil {

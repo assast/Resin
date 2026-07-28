@@ -30,23 +30,94 @@ func ValidateRegionFilters(regionFilters []string) error {
 	return nil
 }
 
+// CompiledRegexFilter is a compiled node-name regex filter with polarity.
+// Negative filters use a leading "!" in the persisted/API string form; the bang
+// is meta-syntax and is not part of the compiled pattern.
+type CompiledRegexFilter struct {
+	Negative bool
+	Re       *regexp.Regexp
+}
+
+// String returns a stable representation for diagnostics (includes "!" for negatives).
+func (f CompiledRegexFilter) String() string {
+	if f.Re == nil {
+		if f.Negative {
+			return "!"
+		}
+		return ""
+	}
+	if f.Negative {
+		return "!" + f.Re.String()
+	}
+	return f.Re.String()
+}
+
 // CompileRegexFilters compiles regex filters in order.
-func CompileRegexFilters(regexFilters []string) ([]*regexp.Regexp, error) {
-	compiled := make([]*regexp.Regexp, 0, len(regexFilters))
-	for i, re := range regexFilters {
-		c, err := regexp.Compile(re)
+// Entries may optionally be prefixed with "!" to mark exclusion; the prefix is
+// stripped before compilation. A bare "!" (empty pattern after strip) is invalid.
+func CompileRegexFilters(regexFilters []string) ([]CompiledRegexFilter, error) {
+	compiled := make([]CompiledRegexFilter, 0, len(regexFilters))
+	for i, raw := range regexFilters {
+		negative := false
+		pattern := raw
+		if strings.HasPrefix(pattern, "!") {
+			negative = true
+			pattern = pattern[1:]
+		}
+		if pattern == "" {
+			if negative {
+				return nil, fmt.Errorf("regex_filters[%d]: exclusion pattern must be non-empty after stripping leading '!'", i)
+			}
+			return nil, fmt.Errorf("regex_filters[%d]: pattern must be non-empty", i)
+		}
+		c, err := regexp.Compile(pattern)
 		if err != nil {
 			return nil, fmt.Errorf("regex_filters[%d]: invalid regex: %v", i, err)
 		}
-		compiled = append(compiled, c)
+		compiled = append(compiled, CompiledRegexFilter{Negative: negative, Re: c})
 	}
 	return compiled, nil
+}
+
+// SplitCompiledRegexFilters separates include and exclude patterns.
+func SplitCompiledRegexFilters(filters []CompiledRegexFilter) (include, exclude []*regexp.Regexp) {
+	if len(filters) == 0 {
+		return nil, nil
+	}
+	include = make([]*regexp.Regexp, 0, len(filters))
+	exclude = make([]*regexp.Regexp, 0, len(filters))
+	for _, f := range filters {
+		if f.Re == nil {
+			continue
+		}
+		if f.Negative {
+			exclude = append(exclude, f.Re)
+		} else {
+			include = append(include, f.Re)
+		}
+	}
+	return include, exclude
+}
+
+// PositiveRegexFilters wraps precompiled regexes as include-only filters (tests/helpers).
+func PositiveRegexFilters(res ...*regexp.Regexp) []CompiledRegexFilter {
+	if len(res) == 0 {
+		return nil
+	}
+	out := make([]CompiledRegexFilter, 0, len(res))
+	for _, re := range res {
+		if re == nil {
+			continue
+		}
+		out = append(out, CompiledRegexFilter{Re: re})
+	}
+	return out
 }
 
 // NewConfiguredPlatform builds a runtime platform with non-filter settings applied.
 func NewConfiguredPlatform(
 	id, name string,
-	regexFilters []*regexp.Regexp,
+	regexFilters []CompiledRegexFilter,
 	regionFilters []string,
 	stickyTTLNs int64,
 	missAction string,
@@ -72,7 +143,7 @@ func NewConfiguredPlatform(
 }
 
 // CompileModelRegexFilters compiles regex filters from persisted model values.
-func CompileModelRegexFilters(platformID string, regexFilters []string) ([]*regexp.Regexp, error) {
+func CompileModelRegexFilters(platformID string, regexFilters []string) ([]CompiledRegexFilter, error) {
 	compiled, err := CompileRegexFilters(regexFilters)
 	if err != nil {
 		return nil, fmt.Errorf("decode platform %s regex_filters: %w", platformID, err)

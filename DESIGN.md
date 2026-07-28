@@ -28,9 +28,9 @@
 * ID：全不可变 UUID，作为主键。
 * Name：平台名，全局唯一。
 * StickyTTL: time.Duration，该平台的粘性租约寿命。
-* RegexFilters：一个正则表达式列表。按照节点的 Tag 的正则表达式过滤器。同时满足所有过滤器才符合条件。
-* RegexFiltersCompiled：编译后的正则表达式列表。用于运行时匹配。随着 RegexFilters 更新。
-* RegionFilters：一个地区列表。小写 ISO codes (e.g., "hk", "us")。节点的出口 IP 地区属于该列表才符合条件。空表示不做地区筛选。
+* RegexFilters：节点名正则过滤规则列表。匹配对象为 `<订阅名>/<tag>`。不以 `!` 开头的为正选（多条需同时满足，AND）；以 `!` 开头的为排除规则（`!` 为元语法，不编入正则）。排除为**节点级硬排除**：任一 candidate 命中任一排除规则，则整节点不可路由。可仅配置排除（全池再扣）。空列表表示不做正则筛选（仍要求存在启用订阅等既有条件）。
+* RegexFiltersCompiled：编译后的正选/排除正则。用于运行时匹配。随着 RegexFilters 更新。
+* RegionFilters：一个地区列表。小写 ISO codes (e.g., "hk", "us")，支持 `!xx` 排除。节点的出口 IP 地区属于该列表才符合条件。空表示不做地区筛选。
 * 反向代理 Account 为空时的行为：随机路由 / 固定 Header 提取 / 按 Account Header Rule 提取。
 * 反向代理匹配 Account 失败后的行为：随机路由 或 拒绝请求。默认是随机路由。
 * 分配新节点的策略：偏好低延迟、偏好闲置 IP、均衡。默认是均衡。
@@ -282,7 +282,7 @@ No available proxy nodes
 * 特质：支持 O(1) 的随机选取与 O(1) 的增删查。
 * 过滤条件：
     1. 节点状态正常（非 Circuit Break）。
-    2. 调用 `NodeEntry.MatchRegexs(Platform.RegexFilters)` 判断 Tag 是否匹配。
+    2. 调用 `NodeEntry.MatchRegexs(include, exclude)`（由 Platform 编译后的正选/排除正则拆分而来）判断 Tag 是否匹配；排除为节点级硬排除。
     3. 节点必须有出口 IP（无论 Platform 是否配置 `RegionFilters`）。
     4. 若 `RegionFilters` 非空，则节点出口 IP 地区必须符合 `RegionFilters`。
     5. 有至少一条延迟信息。
@@ -1200,8 +1200,8 @@ Body：
 
 * `name`：trim 后需非空、全局唯一；不能为保留名 `Default` 或 `api`（大小写不敏感）；且不能包含 `.:|/\@?#%~`、空格、tab、换行、回车。
 * `sticky_ttl`：合法 Go duration。
-* `regex_filters`：每项可被 regexp 编译。
-* `region_filters`：每项为 ISO 3166-1 alpha-2 小写代码。
+* `regex_filters`：每项可被 regexp 编译；可选行首 `!` 表示排除（`!` 不编入正则，剥离后模式须非空）。
+* `region_filters`：每项为 ISO 3166-1 alpha-2 小写代码，可选 `!` 前缀表示排除。
 * 枚举字段：`reverse_proxy_miss_action` 仅 `TREAT_AS_EMPTY|REJECT`；`reverse_proxy_empty_account_behavior` 仅 `RANDOM|FIXED_HEADER|ACCOUNT_HEADER_RULE`；`allocation_policy` 仅 `BALANCED|PREFER_LOW_LATENCY|PREFER_IDLE_IP`。
 * `passive_circuit_breaker_disabled`：布尔值。设为 `true` 后，此 Platform 的用户代理请求失败不会增加节点熔断计数；主动探测不受影响。成功请求仍会清除节点连续失败计数并可恢复熔断节点。
 * 组合约束：当 `reverse_proxy_empty_account_behavior=FIXED_HEADER` 时，`reverse_proxy_fixed_account_header` 必填；其值支持多行，每行一个合法 HTTP Header 字段名（会按顺序尝试提取）。
@@ -1304,7 +1304,7 @@ Body（partial patch 示例）：
 关键校验（最小集）：
 
 * `platform_id`：必须存在。
-* `platform_spec.regex_filters`：每项可被 regexp 编译。
+* `platform_spec.regex_filters`：每项可被 regexp 编译；可选行首 `!` 表示排除。
 * `platform_spec.region_filters`：每项为 ISO 3166-1 alpha-2 小写代码。
 
 错误码映射（最小集）：

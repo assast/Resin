@@ -3,7 +3,6 @@ package routing_test
 import (
 	"encoding/json"
 	"net/netip"
-	"regexp"
 	"sync"
 	"testing"
 	"time"
@@ -71,7 +70,7 @@ func setupPool(t testing.TB) (*topology.GlobalNodePool, *topology.SubscriptionMa
 		LatencyDecayWindow:     func() time.Duration { return 10 * time.Minute },
 	})
 
-	platCfg := platform.NewPlatform(platID, platName, []*regexp.Regexp{}, []string{})
+	platCfg := platform.NewPlatform(platID, platName, nil, []string{})
 	platCfg.StickyTTLNs = int64(1 * time.Hour) // 1 hour stickiness
 	pool.RegisterPlatform(platCfg)
 
@@ -397,7 +396,7 @@ func TestRouteRequest_DefaultPlatform(t *testing.T) {
 	pool, subMgr := setupPool(t)
 
 	// Register default platform too.
-	defaultPlat := platform.NewPlatform(platform.DefaultPlatformID, "Default", []*regexp.Regexp{}, []string{})
+	defaultPlat := platform.NewPlatform(platform.DefaultPlatformID, "Default", nil, []string{})
 	pool.RegisterPlatform(defaultPlat)
 
 	makeRoutableNode(t, pool, subMgr, `{"default":"1"}`, "10.0.0.1", "cloudflare.com", 50*time.Millisecond)

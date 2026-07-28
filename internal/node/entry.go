@@ -107,15 +107,21 @@ func (e *NodeEntry) SubscriptionCount() int {
 	return len(e.subscriptionIDs)
 }
 
-// MatchRegexs tests whether the node matches ALL given regex filters.
-// A match means any tag from any enabled subscription satisfies all regexes.
-// Tags are tested in the format "<subscriptionName>/<tag>".
-// For an empty regex list:
+// MatchRegexs tests whether the node matches include/exclude regex filters.
+//
+// Candidate tags are formed as "<subscriptionName>/<tag>" from enabled subscriptions.
+// Semantics:
+//  1. If any candidate matches any exclude regex, the whole node fails (hard exclude).
+//  2. If include is empty, the node passes when it has at least one enabled-subscription
+//     candidate (and was not hard-excluded).
+//  3. Otherwise the node passes when any single candidate matches ALL include regexes.
+//
+// When both include and exclude are empty:
 //   - if subLookup is nil, it matches everything (compatibility fallback);
 //   - otherwise, it matches only when at least one enabled subscription exists.
-func (e *NodeEntry) MatchRegexs(regexes []*regexp.Regexp, subLookup SubLookupFunc) bool {
+func (e *NodeEntry) MatchRegexs(include, exclude []*regexp.Regexp, subLookup SubLookupFunc) bool {
 	if subLookup == nil {
-		return len(regexes) == 0
+		return len(include) == 0 && len(exclude) == 0
 	}
 
 	e.mu.RLock()
@@ -123,7 +129,7 @@ func (e *NodeEntry) MatchRegexs(regexes []*regexp.Regexp, subLookup SubLookupFun
 	copy(subs, e.subscriptionIDs)
 	e.mu.RUnlock()
 
-	if len(regexes) == 0 {
+	if len(include) == 0 && len(exclude) == 0 {
 		for _, subID := range subs {
 			_, enabled, _, ok := subLookup(subID, e.Hash)
 			if ok && enabled {
@@ -138,16 +144,36 @@ func (e *NodeEntry) MatchRegexs(regexes []*regexp.Regexp, subLookup SubLookupFun
 		return false
 	}
 
+	candidates := make([]string, 0, len(subs))
 	for _, subID := range subs {
 		name, enabled, tags, ok := subLookup(subID, e.Hash)
 		if !ok || !enabled {
 			continue
 		}
 		for _, tag := range tags {
-			candidate := name + "/" + tag
-			if matchesAll(candidate, regexes) {
-				return true
+			candidates = append(candidates, name+"/"+tag)
+		}
+	}
+	if len(candidates) == 0 {
+		return false
+	}
+
+	// Node-level hard exclude: any candidate hitting any exclude rejects the node.
+	if len(exclude) > 0 {
+		for _, candidate := range candidates {
+			if matchesAny(candidate, exclude) {
+				return false
 			}
+		}
+	}
+
+	if len(include) == 0 {
+		return true
+	}
+
+	for _, candidate := range candidates {
+		if matchesAll(candidate, include) {
+			return true
 		}
 	}
 	return false
@@ -192,6 +218,16 @@ func matchesAll(s string, regexes []*regexp.Regexp) bool {
 		}
 	}
 	return true
+}
+
+// matchesAny returns true if s matches at least one regex in the list.
+func matchesAny(s string, regexes []*regexp.Regexp) bool {
+	for _, re := range regexes {
+		if re.MatchString(s) {
+			return true
+		}
+	}
+	return false
 }
 
 // --- Condition helpers for platform filtering ---

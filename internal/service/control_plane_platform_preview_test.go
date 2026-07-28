@@ -161,3 +161,31 @@ func TestPreviewFilter_RegionNegation_UnknownRegionExcluded(t *testing.T) {
 		}
 	}
 }
+
+func TestPreviewFilter_RegexNegation(t *testing.T) {
+	fixture := buildPreviewFilterFixture(t)
+
+	nodes, err := fixture.cp.PreviewFilter(PreviewFilterRequest{
+		PlatformSpec: &PlatformSpecFilter{
+			RegexFilters:  []string{".*", "!.*hk.*"},
+			RegionFilters: nil,
+		},
+	})
+	if err != nil {
+		t.Fatalf("PreviewFilter: %v", err)
+	}
+	for _, n := range nodes {
+		if n.NodeHash == fixture.hkHash {
+			t.Fatalf("hk node %s should have been regex-excluded", fixture.hkHash)
+		}
+	}
+	foundUS := false
+	for _, n := range nodes {
+		if n.NodeHash == fixture.usHash {
+			foundUS = true
+		}
+	}
+	if !foundUS {
+		t.Fatalf("us node %s should remain after regex exclude", fixture.usHash)
+	}
+}

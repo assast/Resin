@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -234,10 +233,8 @@ func LoadEnvConfig() (*EnvConfig, error) {
 	if cfg.DefaultPlatformStickyTTL <= 0 {
 		errs = append(errs, "RESIN_DEFAULT_PLATFORM_STICKY_TTL must be positive")
 	}
-	for _, pattern := range cfg.DefaultPlatformRegexFilters {
-		if _, err := regexp.Compile(pattern); err != nil {
-			errs = append(errs, fmt.Sprintf("RESIN_DEFAULT_PLATFORM_REGEX_FILTERS: invalid regex %q: %v", pattern, err))
-		}
+	if _, err := platform.CompileRegexFilters(cfg.DefaultPlatformRegexFilters); err != nil {
+		errs = append(errs, fmt.Sprintf("RESIN_DEFAULT_PLATFORM_REGEX_FILTERS: %v", err))
 	}
 	if err := platform.ValidateRegionFilters(cfg.DefaultPlatformRegionFilters); err != nil {
 		errs = append(errs, fmt.Sprintf("RESIN_DEFAULT_PLATFORM_REGION_FILTERS: %v", err))

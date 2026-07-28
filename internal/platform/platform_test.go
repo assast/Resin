@@ -112,7 +112,7 @@ func TestPlatform_EvaluateNode_NoEgressIP(t *testing.T) {
 }
 
 func TestPlatform_EvaluateNode_RegexFilter(t *testing.T) {
-	regexes := []*regexp.Regexp{regexp.MustCompile("us")}
+	regexes := PositiveRegexFilters(regexp.MustCompile("us"))
 	p := NewPlatform("p1", "Test", regexes, nil)
 	h := makeHash(`{"type":"ss"}`)
 	entry := makeFullyRoutableEntry(h, "sub1")
@@ -127,7 +127,7 @@ func TestPlatform_EvaluateNode_RegexFilter(t *testing.T) {
 	}
 
 	// Now with a "jp" filter — should NOT match.
-	p2 := NewPlatform("p2", "Test", []*regexp.Regexp{regexp.MustCompile("^jp")}, nil)
+	p2 := NewPlatform("p2", "Test", PositiveRegexFilters(regexp.MustCompile("^jp")), nil)
 	p2.FullRebuild(func(fn func(node.Hash, *node.NodeEntry) bool) {
 		fn(h, entry)
 	}, alwaysLookup, usGeoLookup)

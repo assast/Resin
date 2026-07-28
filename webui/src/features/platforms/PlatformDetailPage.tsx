@@ -1,7 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { AlertTriangle, ArrowLeft, Info, RefreshCw, Sparkles, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Info, RefreshCw, Search, Sparkles, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
@@ -68,6 +68,8 @@ export function PlatformDetailPage() {
   const [activeTab, setActiveTab] = useState<PlatformDetailTab>("monitor");
   const [leasePage, setLeasePage] = useState(0);
   const [leasePageSize, setLeasePageSize] = useState<number>(LEASE_PAGE_SIZE_OPTIONS[0]);
+  const [leaseAccountFilter, setLeaseAccountFilter] = useState("");
+  const [debouncedLeaseAccountFilter, setDebouncedLeaseAccountFilter] = useState("");
   const { toasts, showToast, dismissToast } = useToast();
   const queryClient = useQueryClient();
   const formatPlatformMutationError = (error: unknown) => {
@@ -88,8 +90,10 @@ export function PlatformDetailPage() {
 
   const platform = platformQuery.data ?? null;
 
+  const leaseAccountKeyword = debouncedLeaseAccountFilter.trim();
+
   const leaseQuery = useQuery({
-    queryKey: ["platform-leases", platform?.id, leasePage, leasePageSize],
+    queryKey: ["platform-leases", platform?.id, leasePage, leasePageSize, leaseAccountKeyword],
     queryFn: () => {
       if (!platform) {
         throw new Error("平台不存在或已被删除");
@@ -97,6 +101,8 @@ export function PlatformDetailPage() {
       return listPlatformLeases(platform.id, {
         limit: leasePageSize,
         offset: leasePage * leasePageSize,
+        account: leaseAccountKeyword || undefined,
+        fuzzy: leaseAccountKeyword ? true : undefined,
         sort_by: "expiry",
         sort_order: "asc",
       });
@@ -130,7 +136,20 @@ export function PlatformDetailPage() {
 
   useEffect(() => {
     setLeasePage(0);
+    setLeaseAccountFilter("");
+    setDebouncedLeaseAccountFilter("");
   }, [platformId]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedLeaseAccountFilter(leaseAccountFilter);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [leaseAccountFilter]);
+
+  useEffect(() => {
+    setLeasePage(0);
+  }, [debouncedLeaseAccountFilter]);
 
   useEffect(() => {
     const maxPage = Math.max(0, Math.ceil(leasesPage.total / leasePageSize) - 1);
@@ -624,8 +643,8 @@ export function PlatformDetailPage() {
                       <span>{t("节点名正则过滤规则")}</span>
                       <span
                         className="subscription-info-icon"
-                        title={t("满足所有正则表达式的节点才会被选择")}
-                        aria-label={t("满足所有正则表达式的节点才会被选择")}
+                        title={t("正选需全部满足；! 开头为排除规则")}
+                        aria-label={t("正选需全部满足；! 开头为排除规则")}
                         tabIndex={0}
                       >
                         <Info size={13} />
@@ -634,10 +653,13 @@ export function PlatformDetailPage() {
                     <Textarea
                       id="detail-edit-regex"
                       rows={6}
-                      placeholder={t("每行一条，例如 .*专线.* 或 <订阅名>/.*")}
+                      placeholder={t("每行一条，例如 ^Provider/.*、.*香港.* 或 !.*试用.*")}
                       {...editForm.register("regex_filters_text")}
                     />
                     <p className="muted" style={{ marginTop: 4, fontSize: 12 }}>
+                      {t("匹配对象为 <订阅名>/<节点名>。正选多条需同时满足（AND）；以 ! 开头可排除（如 !.*试用.* 或 !MySub/节点A），可与正选混用：先正选再排除。")}
+                    </p>
+                    <p className="muted" style={{ marginTop: 2, fontSize: 12 }}>
                       {t("技巧：<订阅名>/.* 可筛选来自该订阅的节点。")}
                     </p>
                   </div>
@@ -718,15 +740,32 @@ export function PlatformDetailPage() {
                       <h4>{t("租约管理")}</h4>
                       <p>{t("查看当前平台的租约绑定，并按账号释放单个租约。")}</p>
                     </div>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => void leaseQuery.refetch()}
-                      disabled={leaseQuery.isFetching}
-                    >
-                      <RefreshCw size={16} className={leaseQuery.isFetching ? "spin" : undefined} />
-                      {t("刷新")}
-                    </Button>
+                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                      <label
+                        className="search-box"
+                        htmlFor="platform-lease-account-search"
+                        style={{ maxWidth: 220, margin: 0, gap: 6 }}
+                      >
+                        <Search size={16} />
+                        <Input
+                          id="platform-lease-account-search"
+                          placeholder={t("搜索账号")}
+                          value={leaseAccountFilter}
+                          onChange={(event) => setLeaseAccountFilter(event.target.value)}
+                          aria-label={t("按账号筛选租约")}
+                          style={{ padding: "6px 10px", borderRadius: 8 }}
+                        />
+                      </label>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => void leaseQuery.refetch()}
+                        disabled={leaseQuery.isFetching}
+                      >
+                        <RefreshCw size={16} className={leaseQuery.isFetching ? "spin" : undefined} />
+                        {t("刷新")}
+                      </Button>
+                    </div>
                   </div>
 
                   {leaseQuery.isLoading ? <p className="muted">{t("正在加载租约数据...")}</p> : null}
@@ -741,7 +780,7 @@ export function PlatformDetailPage() {
                   {!leaseQuery.isLoading && !leases.length ? (
                     <div className="empty-box">
                       <Sparkles size={16} />
-                      <p>{t("当前平台暂无租约")}</p>
+                      <p>{leaseAccountKeyword ? t("当前筛选无匹配租约") : t("当前平台暂无租约")}</p>
                     </div>
                   ) : null}
 

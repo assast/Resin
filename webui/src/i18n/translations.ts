@@ -311,10 +311,19 @@ const EXACT_ZH_TO_EN: Record<string, string> = {
   "地区过滤规则（可选）": "Region filters (optional)",
   "每行一条": "One per line",
   "每行一条，例如 .*专线.* 或 <订阅名>/.*": "One per line, e.g. .*Dedicated.* or <SubscriptionName>/.*",
+  "每行一条，例如 ^Provider/.*、.*香港.* 或 !.*试用.*":
+    "One per line, e.g. ^Provider/.*, .*HongKong.*, or !.*trial.*",
   "技巧：<订阅名>/.* 可筛选来自该订阅的节点。":
     "Tip: use <SubscriptionName>/.* to match nodes from that subscription.",
+  "匹配对象为 <订阅名>/<节点名>。正选多条需同时满足（AND）；以 ! 开头可排除（如 !.*试用.* 或 !MySub/节点A），可与正选混用：先正选再排除。":
+    "Matched form is <SubscriptionName>/<NodeName>. Multiple includes are AND. Prefix with ! to exclude (e.g. !.*trial.* or !MySub/NodeA). Mix include and exclude: include first, then exclude.",
   "满足所有正则表达式的节点才会被选择":
     "Only nodes that satisfy all regex expressions will be selected.",
+  "正选需全部满足；! 开头为排除规则":
+    "All includes must match; lines starting with ! are exclusions",
+  "按账号筛选租约": "Filter leases by account",
+  "搜索账号": "Search account",
+  "当前筛选无匹配租约": "No leases match the current filter",
   "每行一条，如 hk / us": "One per line, e.g. hk / us",
   "每行一条，如 hk / us / !hk": "One per line, e.g. hk / us / !hk",
   "支持反选：以 ! 开头可排除地区（如 !hk）。可与正选混用，最终结果为“先正选再排除”。":

@@ -43,10 +43,10 @@ func TestNodeEntry_SubscriptionIDs(t *testing.T) {
 
 func TestNodeEntry_MatchRegexs_EmptyRegex(t *testing.T) {
 	e := NewNodeEntry(Hash{}, nil, time.Now(), 0)
-	if !e.MatchRegexs(nil, nil) {
+	if !e.MatchRegexs(nil, nil, nil) {
 		t.Fatal("empty regex list should match")
 	}
-	if !e.MatchRegexs([]*regexp.Regexp{}, nil) {
+	if !e.MatchRegexs(nil, nil, nil) {
 		t.Fatal("empty regex slice should match")
 	}
 }
@@ -67,12 +67,12 @@ func TestNodeEntry_MatchRegexs_EmptyRegex_RequiresEnabledSubscriptionWhenLookupP
 		}
 	}
 
-	if e.MatchRegexs([]*regexp.Regexp{}, lookup) {
+	if e.MatchRegexs(nil, nil, lookup) {
 		t.Fatal("empty regex with lookup should not match when all subscriptions are disabled")
 	}
 
 	e.AddSubscriptionID("sub-enabled")
-	if !e.MatchRegexs([]*regexp.Regexp{}, lookup) {
+	if !e.MatchRegexs(nil, nil, lookup) {
 		t.Fatal("empty regex with lookup should match when any subscription is enabled")
 	}
 }
@@ -91,13 +91,13 @@ func TestNodeEntry_MatchRegexs_Basic(t *testing.T) {
 
 	// Match "MySub/us-node" — should match regex "us".
 	regexes := []*regexp.Regexp{regexp.MustCompile("us")}
-	if !e.MatchRegexs(regexes, lookup) {
+	if !e.MatchRegexs(regexes, nil, lookup) {
 		t.Fatal("should match 'us' regex")
 	}
 
 	// Should not match "jp".
 	regexes = []*regexp.Regexp{regexp.MustCompile("jp")}
-	if e.MatchRegexs(regexes, lookup) {
+	if e.MatchRegexs(regexes, nil, lookup) {
 		t.Fatal("should not match 'jp' regex")
 	}
 }
@@ -116,7 +116,7 @@ func TestNodeEntry_MatchRegexs_AllRegexesMustMatch(t *testing.T) {
 		regexp.MustCompile("us"),
 		regexp.MustCompile("fast"),
 	}
-	if !e.MatchRegexs(regexes, lookup) {
+	if !e.MatchRegexs(regexes, nil, lookup) {
 		t.Fatal("both regexes should match")
 	}
 
@@ -125,7 +125,7 @@ func TestNodeEntry_MatchRegexs_AllRegexesMustMatch(t *testing.T) {
 		regexp.MustCompile("us"),
 		regexp.MustCompile("jp"),
 	}
-	if e.MatchRegexs(regexes, lookup) {
+	if e.MatchRegexs(regexes, nil, lookup) {
 		t.Fatal("should not match when one regex fails")
 	}
 }
@@ -140,7 +140,7 @@ func TestNodeEntry_MatchRegexs_DisabledSubSkipped(t *testing.T) {
 	}
 
 	regexes := []*regexp.Regexp{regexp.MustCompile("us")}
-	if e.MatchRegexs(regexes, lookup) {
+	if e.MatchRegexs(regexes, nil, lookup) {
 		t.Fatal("disabled sub should not contribute to match")
 	}
 }
@@ -163,7 +163,7 @@ func TestNodeEntry_MatchRegexs_MultiSub(t *testing.T) {
 
 	// Match "us" — should match via sub-2.
 	regexes := []*regexp.Regexp{regexp.MustCompile("us")}
-	if !e.MatchRegexs(regexes, lookup) {
+	if !e.MatchRegexs(regexes, nil, lookup) {
 		t.Fatal("should match via second subscription")
 	}
 }
@@ -335,5 +335,79 @@ func TestNodeEntry_GetRegion_UsesStoredThenGeoIPFallback(t *testing.T) {
 	}
 	if geoLookupCalled {
 		t.Fatal("geo lookup should not be called when stored region exists")
+	}
+}
+
+func TestNodeEntry_MatchRegexs_ExcludeOnly(t *testing.T) {
+	h := HashFromRawOptions([]byte(`{"type":"ss"}`))
+	e := NewNodeEntry(h, nil, time.Now(), 0)
+	e.AddSubscriptionID("sub-1")
+
+	lookup := func(subID string, hash Hash) (string, bool, []string, bool) {
+		return "Provider", true, []string{"hk-node"}, true
+	}
+
+	exclude := []*regexp.Regexp{regexp.MustCompile("试用")}
+	if !e.MatchRegexs(nil, exclude, lookup) {
+		t.Fatal("node should pass when exclude does not match")
+	}
+
+	exclude = []*regexp.Regexp{regexp.MustCompile("hk")}
+	if e.MatchRegexs(nil, exclude, lookup) {
+		t.Fatal("node should fail when exclude matches")
+	}
+}
+
+func TestNodeEntry_MatchRegexs_IncludeAndExclude(t *testing.T) {
+	h := HashFromRawOptions([]byte(`{"type":"ss"}`))
+	e := NewNodeEntry(h, nil, time.Now(), 0)
+	e.AddSubscriptionID("sub-1")
+
+	lookup := func(subID string, hash Hash) (string, bool, []string, bool) {
+		return "Provider", true, []string{"香港-01"}, true
+	}
+
+	include := []*regexp.Regexp{
+		regexp.MustCompile(`^Provider/.*`),
+		regexp.MustCompile("香港"),
+	}
+	exclude := []*regexp.Regexp{regexp.MustCompile("试用")}
+	if !e.MatchRegexs(include, exclude, lookup) {
+		t.Fatal("should pass include AND and miss exclude")
+	}
+
+	exclude = []*regexp.Regexp{regexp.MustCompile("香港")}
+	if e.MatchRegexs(include, exclude, lookup) {
+		t.Fatal("should fail when exclude hits")
+	}
+}
+
+func TestNodeEntry_MatchRegexs_HardExcludeMultiTag(t *testing.T) {
+	h := HashFromRawOptions([]byte(`{"type":"ss"}`))
+	e := NewNodeEntry(h, nil, time.Now(), 0)
+	e.AddSubscriptionID("sub-a")
+	e.AddSubscriptionID("sub-b")
+
+	lookup := func(subID string, hash Hash) (string, bool, []string, bool) {
+		switch subID {
+		case "sub-a":
+			return "SubA", true, []string{"正常"}, true
+		case "sub-b":
+			return "SubB", true, []string{"试用-01"}, true
+		default:
+			return "", false, nil, false
+		}
+	}
+
+	// Without hard exclude, SubA/正常 would satisfy empty include.
+	// With exclude on 试用, whole node must fail.
+	exclude := []*regexp.Regexp{regexp.MustCompile("试用")}
+	if e.MatchRegexs(nil, exclude, lookup) {
+		t.Fatal("multi-tag node must hard-fail when any candidate matches exclude")
+	}
+
+	include := []*regexp.Regexp{regexp.MustCompile(`^SubA/`)}
+	if e.MatchRegexs(include, exclude, lookup) {
+		t.Fatal("include match on another tag must not bypass hard exclude")
 	}
 }

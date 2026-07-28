@@ -2,7 +2,6 @@ package platform
 
 import (
 	"net/netip"
-	"regexp"
 	"sync"
 
 	"github.com/Resinat/Resin/internal/node"
@@ -29,8 +28,8 @@ type Platform struct {
 	Name string
 
 	// Filter configuration.
-	RegexFilters  []*regexp.Regexp
-	RegionFilters []string // lowercase ISO codes, supports negation "!xx"
+	RegexFilters  []CompiledRegexFilter // supports negation via leading "!"
+	RegionFilters []string              // lowercase ISO codes, supports negation "!xx"
 
 	// Other config fields.
 	StickyTTLNs                      int64
@@ -48,7 +47,7 @@ type Platform struct {
 }
 
 // NewPlatform creates a Platform with an empty routable view.
-func NewPlatform(id, name string, regexFilters []*regexp.Regexp, regionFilters []string) *Platform {
+func NewPlatform(id, name string, regexFilters []CompiledRegexFilter, regionFilters []string) *Platform {
 	return &Platform{
 		ID:            id,
 		Name:          name,
@@ -124,8 +123,9 @@ func (p *Platform) evaluateNode(
 		return false
 	}
 
-	// 2. Tag regex match.
-	if !entry.MatchRegexs(p.RegexFilters, subLookup) {
+	// 2. Tag regex match (include AND + node-level hard exclude).
+	include, exclude := SplitCompiledRegexFilters(p.RegexFilters)
+	if !entry.MatchRegexs(include, exclude, subLookup) {
 		return false
 	}
 

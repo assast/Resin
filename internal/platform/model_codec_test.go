@@ -56,7 +56,7 @@ func TestBuildFromModel_Success(t *testing.T) {
 	if !plat.PassiveCircuitBreakerDisabled {
 		t.Fatal("passive circuit breaker flag mismatch: got false want true")
 	}
-	if len(plat.RegexFilters) != 1 || !plat.RegexFilters[0].MatchString("us-node") {
+	if len(plat.RegexFilters) != 1 || plat.RegexFilters[0].Negative || plat.RegexFilters[0].Re == nil || !plat.RegexFilters[0].Re.MatchString("us-node") {
 		t.Fatalf("regex filters not compiled as expected: %+v", plat.RegexFilters)
 	}
 	if len(plat.RegionFilters) != 2 || plat.RegionFilters[0] != "us" || plat.RegionFilters[1] != "jp" {
@@ -194,6 +194,50 @@ func TestValidateRegionFilters_Invalid(t *testing.T) {
 		t.Fatal("expected validation error")
 	}
 	if !strings.Contains(err.Error(), "region_filters[0]") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCompileRegexFilters_ExclusionPrefix(t *testing.T) {
+	compiled, err := CompileRegexFilters([]string{`^Provider/.*`, `!.*试用.*`, `!Provider/香港-01`})
+	if err != nil {
+		t.Fatalf("CompileRegexFilters: %v", err)
+	}
+	if len(compiled) != 3 {
+		t.Fatalf("len=%d want 3", len(compiled))
+	}
+	if compiled[0].Negative || compiled[0].Re.String() != `^Provider/.*` {
+		t.Fatalf("positive filter mismatch: %+v", compiled[0])
+	}
+	if !compiled[1].Negative || compiled[1].Re.String() != `.*试用.*` {
+		t.Fatalf("exclude filter mismatch: %+v", compiled[1])
+	}
+	if !compiled[2].Negative || compiled[2].Re.String() != `Provider/香港-01` {
+		t.Fatalf("exact exclude mismatch: %+v", compiled[2])
+	}
+
+	include, exclude := SplitCompiledRegexFilters(compiled)
+	if len(include) != 1 || len(exclude) != 2 {
+		t.Fatalf("split include=%d exclude=%d", len(include), len(exclude))
+	}
+}
+
+func TestCompileRegexFilters_BareBangRejected(t *testing.T) {
+	_, err := CompileRegexFilters([]string{"!"})
+	if err == nil {
+		t.Fatal("expected bare ! to be rejected")
+	}
+	if !strings.Contains(err.Error(), "regex_filters[0]") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCompileRegexFilters_EmptyPatternRejected(t *testing.T) {
+	_, err := CompileRegexFilters([]string{""})
+	if err == nil {
+		t.Fatal("expected empty pattern to be rejected")
+	}
+	if !strings.Contains(err.Error(), "regex_filters[0]") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

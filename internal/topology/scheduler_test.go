@@ -1144,7 +1144,7 @@ func TestScheduler_SetSubscriptionEnabled_RebuildsPlatformViews(t *testing.T) {
 	pool := newTestPool(subMgr)
 
 	// Platform with regex matching the tag "us-node" via sub name "Provider".
-	plat := platform.NewPlatform("p1", "US", []*regexp.Regexp{regexp.MustCompile("us")}, nil)
+	plat := platform.NewPlatform("p1", "US", platform.PositiveRegexFilters(regexp.MustCompile("us")), nil)
 	pool.RegisterPlatform(plat)
 
 	raw := json.RawMessage(`{"type":"shadowsocks","server":"1.1.1.1","server_port":443}`)
