@@ -20,6 +20,7 @@ import { useI18n } from "../../i18n";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { formatDateTime, formatGoDuration, formatRelativeTime } from "../../lib/time";
 import {
+  bulkDeletePlatformLeases,
   clearAllPlatformLeases,
   deletePlatform,
   deletePlatformLease,
@@ -52,7 +53,7 @@ type PlatformDetailTab = "monitor" | "access" | "config" | "ops";
 
 const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
 const LEASE_MANAGEMENT_ANCHOR = "platform-lease-management";
-const LEASE_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
+const LEASE_PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 500, 1000] as const;
 const DETAIL_TABS: Array<{ key: PlatformDetailTab; label: string; hint: string }> = [
   { key: "monitor", label: "监控", hint: "平台运行态趋势和快照" },
   { key: "access", label: "接入", hint: "复制正向/反向代理地址" },
@@ -83,6 +84,7 @@ export function PlatformDetailPage() {
   const [debouncedLeaseEgressIPFilter, setDebouncedLeaseEgressIPFilter] = useState("");
   const [leaseSortBy, setLeaseSortBy] = useState<PlatformLeaseSortBy>("expiry");
   const [leaseSortOrder, setLeaseSortOrder] = useState<SortOrder>("asc");
+  const [selectedLeaseAccounts, setSelectedLeaseAccounts] = useState<Set<string>>(() => new Set());
   const { toasts, showToast, dismissToast } = useToast();
   const queryClient = useQueryClient();
   const formatPlatformMutationError = (error: unknown) => {
@@ -172,6 +174,7 @@ export function PlatformDetailPage() {
     setDebouncedLeaseEgressIPFilter("");
     setLeaseSortBy("expiry");
     setLeaseSortOrder("asc");
+    setSelectedLeaseAccounts(new Set());
   }, [platformId]);
 
   useEffect(() => {
@@ -197,6 +200,7 @@ export function PlatformDetailPage() {
 
   useEffect(() => {
     setLeasePage(0);
+    setSelectedLeaseAccounts(new Set());
   }, [
     debouncedLeaseAccountFilter,
     debouncedLeaseNodeFilter,
@@ -284,6 +288,7 @@ export function PlatformDetailPage() {
         queryClient.invalidateQueries({ queryKey: ["platform-monitor"] }),
         queryClient.invalidateQueries({ queryKey: ["platform-leases", updated.id] }),
       ]);
+      setSelectedLeaseAccounts(new Set());
       showToast("success", t("平台 {{name}} 的所有租约已清除", { name: updated.name }));
     },
     onError: (error) => {
@@ -306,7 +311,54 @@ export function PlatformDetailPage() {
           queryClient.invalidateQueries({ queryKey: ["platform-leases", platform.id] }),
         ]);
       }
+      setSelectedLeaseAccounts((prev) => {
+        if (!prev.has(lease.account)) {
+          return prev;
+        }
+        const next = new Set(prev);
+        next.delete(lease.account);
+        return next;
+      });
       showToast("success", t("账号 {{account}} 的租约已释放", { account: lease.account }));
+    },
+    onError: (error) => {
+      showToast("error", formatApiErrorMessage(error, t));
+    },
+  });
+
+  const bulkDeleteLeasesMutation = useMutation({
+    mutationFn: async (input: { mode: "selected" | "matching"; accounts?: string[] }) => {
+      if (!platform) {
+        throw new Error("平台不存在或已被删除");
+      }
+      if (input.mode === "selected") {
+        const accounts = input.accounts ?? [];
+        if (!accounts.length) {
+          throw new Error("未选择任何租约");
+        }
+        return bulkDeletePlatformLeases(platform.id, accounts);
+      }
+      return bulkDeletePlatformLeases(platform.id, undefined, {
+        account: leaseAccountKeyword || undefined,
+        node: leaseNodeKeyword || undefined,
+        egress_ip: leaseEgressIPKeyword || undefined,
+        fuzzy: true,
+      });
+    },
+    onSuccess: async (result) => {
+      if (platform) {
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["platform-monitor"] }),
+          queryClient.invalidateQueries({ queryKey: ["platform-leases", platform.id] }),
+        ]);
+      }
+      setSelectedLeaseAccounts(new Set());
+      showToast(
+        "success",
+        t("已删除 {{deleted}} 条租约", {
+          deleted: result.deleted,
+        }),
+      );
     },
     onError: (error) => {
       showToast("error", formatApiErrorMessage(error, t));
@@ -368,6 +420,82 @@ export function PlatformDetailPage() {
     await releaseLeaseMutation.mutateAsync(lease);
   };
 
+  const toggleLeaseAccount = (account: string, checked: boolean) => {
+    setSelectedLeaseAccounts((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(account);
+      } else {
+        next.delete(account);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAllLeasesOnPage = (checked: boolean) => {
+    setSelectedLeaseAccounts((prev) => {
+      const next = new Set(prev);
+      for (const lease of leases) {
+        if (checked) {
+          next.add(lease.account);
+        } else {
+          next.delete(lease.account);
+        }
+      }
+      return next;
+    });
+  };
+
+  const handleBulkDeleteSelected = async () => {
+    const accounts = Array.from(selectedLeaseAccounts);
+    if (!accounts.length) {
+      return;
+    }
+    const preview =
+      accounts.length <= 20
+        ? accounts.join(", ")
+        : t("共 {{count}} 个账号（前 20 个：{{preview}}…）", {
+            count: accounts.length,
+            preview: accounts.slice(0, 20).join(", "),
+          });
+    const confirmed = window.confirm(
+      t("确认删除选中的 {{count}} 条租约？\n\n{{preview}}", {
+        count: accounts.length,
+        preview,
+      }),
+    );
+    if (!confirmed) {
+      return;
+    }
+    await bulkDeleteLeasesMutation.mutateAsync({ mode: "selected", accounts });
+  };
+
+  const handleBulkDeleteMatching = async () => {
+    if (!hasLeaseFilter) {
+      return;
+    }
+    const parts: string[] = [];
+    if (leaseAccountKeyword) {
+      parts.push(`${t("账号")}=${leaseAccountKeyword}`);
+    }
+    if (leaseNodeKeyword) {
+      parts.push(`${t("节点")}=${leaseNodeKeyword}`);
+    }
+    if (leaseEgressIPKeyword) {
+      parts.push(`${t("出口 IP")}=${leaseEgressIPKeyword}`);
+    }
+    const confirmed = window.confirm(
+      t("确认删除全部匹配的 {{count}} 条租约？\n\n筛选条件：{{filters}}\n\n将释放这些账号的粘性绑定，下次请求会重新分配出口。", {
+        count: leasesPage.total,
+        filters: parts.join("  ") || "-",
+      }),
+    );
+    if (!confirmed) {
+      return;
+    }
+    await bulkDeleteLeasesMutation.mutateAsync({ mode: "matching" });
+  };
+
   const changeLeasePageSize = (next: number) => {
     setLeasePageSize(next);
     setLeasePage(0);
@@ -384,7 +512,45 @@ export function PlatformDetailPage() {
     setLeasePage(0);
   };
 
+  const pageLeaseAccounts = leases.map((lease) => lease.account);
+  const allPageLeasesSelected =
+    pageLeaseAccounts.length > 0 && pageLeaseAccounts.every((account) => selectedLeaseAccounts.has(account));
+  const somePageLeasesSelected = pageLeaseAccounts.some((account) => selectedLeaseAccounts.has(account));
+  const selectedLeaseCount = selectedLeaseAccounts.size;
+  const showLeaseBulkBar = selectedLeaseCount > 0 || hasLeaseFilter;
+  const bulkBusy = bulkDeleteLeasesMutation.isPending || clearLeasesMutation.isPending || releaseLeaseMutation.isPending;
+
   const leaseColumns: ColumnDef<PlatformLease>[] = [
+    {
+      id: "select",
+      header: () => (
+        <input
+          type="checkbox"
+          checked={allPageLeasesSelected}
+          ref={(el) => {
+            if (el) {
+              el.indeterminate = !allPageLeasesSelected && somePageLeasesSelected;
+            }
+          }}
+          onChange={(event) => toggleSelectAllLeasesOnPage(event.target.checked)}
+          disabled={!leases.length || bulkBusy}
+          aria-label={t("全选当前页租约")}
+        />
+      ),
+      cell: ({ row }) => {
+        const account = row.original.account;
+        return (
+          <input
+            type="checkbox"
+            checked={selectedLeaseAccounts.has(account)}
+            onChange={(event) => toggleLeaseAccount(account, event.target.checked)}
+            disabled={bulkBusy}
+            aria-label={t("选择账号 {{account}}", { account })}
+            onClick={(event) => event.stopPropagation()}
+          />
+        );
+      },
+    },
     {
       accessorKey: "account",
       header: () => (
@@ -449,7 +615,7 @@ export function PlatformDetailPage() {
               variant="ghost"
               size="sm"
               onClick={() => void handleReleaseLease(lease)}
-              disabled={releasing || clearLeasesMutation.isPending}
+              disabled={releasing || bulkBusy}
               title={t("释放租约")}
               aria-label={t("释放账号 {{account}} 的租约", { account: lease.account })}
               style={{ color: "var(--delete-btn-color, #c27070)" }}
@@ -818,7 +984,7 @@ export function PlatformDetailPage() {
                   <div className="platform-drawer-section-head platform-lease-head">
                     <div>
                       <h4>{t("租约管理")}</h4>
-                      <p>{t("查看当前平台的租约绑定，并按账号释放单个租约。")}</p>
+                      <p>{t("查看当前平台的租约绑定，支持筛选后批量释放或单条释放。")}</p>
                     </div>
                     <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
                       <label
@@ -884,6 +1050,42 @@ export function PlatformDetailPage() {
                     <div className="callout callout-error">
                       <AlertTriangle size={14} />
                       <span>{formatApiErrorMessage(leaseQuery.error, t)}</span>
+                    </div>
+                  ) : null}
+
+                  {showLeaseBulkBar ? (
+                    <div className="platform-lease-bulk-bar">
+                      <span className="platform-lease-bulk-summary">
+                        {selectedLeaseCount > 0
+                          ? t("已选 {{selected}} 条", { selected: selectedLeaseCount })
+                          : t("未选中")}
+                        {hasLeaseFilter ? t(" / 匹配 {{matched}} 条", { matched: leasesPage.total }) : null}
+                      </span>
+                      <div className="platform-lease-bulk-actions">
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          onClick={() => void handleBulkDeleteSelected()}
+                          disabled={selectedLeaseCount === 0 || bulkBusy}
+                        >
+                          {bulkDeleteLeasesMutation.isPending
+                            ? t("删除中...")
+                            : t("删除选中 ({{count}})", { count: selectedLeaseCount })}
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => void handleBulkDeleteMatching()}
+                          disabled={!hasLeaseFilter || leasesPage.total === 0 || bulkBusy}
+                          title={
+                            hasLeaseFilter
+                              ? t("按当前筛选条件删除全部匹配租约")
+                              : t("请先设置筛选条件；清空全部请使用「清除所有租约」")
+                          }
+                        >
+                          {t("删除全部匹配 ({{count}})", { count: hasLeaseFilter ? leasesPage.total : 0 })}
+                        </Button>
+                      </div>
                     </div>
                   ) : null}
 

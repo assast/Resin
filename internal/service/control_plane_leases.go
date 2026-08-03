@@ -148,6 +148,35 @@ func (s *ControlPlaneService) DeleteAllLeases(platformID string) error {
 	return nil
 }
 
+// BulkDeleteResult is the result of a bulk lease delete.
+type BulkDeleteResult struct {
+	Deleted  int `json:"deleted"`
+	NotFound int `json:"not_found"`
+}
+
+// BulkDeleteLeases deletes leases for the given accounts on a platform.
+// Missing individual leases are counted in NotFound and do not fail the call.
+func (s *ControlPlaneService) BulkDeleteLeases(platformID string, accounts []string) (*BulkDeleteResult, error) {
+	if _, ok := s.Pool.GetPlatform(platformID); !ok {
+		return nil, notFound("platform not found")
+	}
+
+	result := &BulkDeleteResult{}
+	for _, account := range accounts {
+		account = strings.TrimSpace(account)
+		if account == "" {
+			result.NotFound++
+			continue
+		}
+		if s.Router.DeleteLease(platformID, account) {
+			result.Deleted++
+		} else {
+			result.NotFound++
+		}
+	}
+	return result, nil
+}
+
 // IPLoadEntry is the API response for IP load stats.
 type IPLoadEntry struct {
 	EgressIP   string `json:"egress_ip"`

@@ -176,3 +176,35 @@ export async function clearAllPlatformLeases(id: string): Promise<void> {
     method: "DELETE",
   });
 }
+
+export type BulkDeletePlatformLeasesResult = {
+  deleted: number;
+  not_found: number;
+};
+
+export type BulkDeletePlatformLeasesFilter = {
+  account?: string;
+  node?: string;
+  egress_ip?: string;
+  fuzzy?: boolean;
+};
+
+export async function bulkDeletePlatformLeases(
+  id: string,
+  accounts?: string[],
+  filter?: BulkDeletePlatformLeasesFilter,
+): Promise<BulkDeletePlatformLeasesResult> {
+  const body: { accounts?: string[]; filter?: BulkDeletePlatformLeasesFilter } = {};
+  if (accounts && accounts.length > 0) {
+    body.accounts = accounts;
+  } else if (filter) {
+    body.filter = filter;
+  } else {
+    throw new Error("bulkDeletePlatformLeases: provide accounts or filter");
+  }
+
+  return apiRequest<BulkDeletePlatformLeasesResult>(`${basePath}/${id}/leases/actions/bulk-delete`, {
+    method: "POST",
+    body,
+  });
+}

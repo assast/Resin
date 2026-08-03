@@ -88,6 +88,7 @@ func NewServerWithAddress(
 		// Leases (under platforms).
 		authed.Handle("GET /api/v1/platforms/{id}/leases", HandleListLeases(cp))
 		authed.Handle("DELETE /api/v1/platforms/{id}/leases", HandleDeleteAllLeases(cp))
+		authed.Handle("POST /api/v1/platforms/{id}/leases/actions/bulk-delete", HandleBulkDeleteLeases(cp))
 		authed.Handle("GET /api/v1/platforms/{id}/leases/{account}", HandleGetLease(cp))
 		authed.Handle("DELETE /api/v1/platforms/{id}/leases/{account}", HandleDeleteLease(cp))
 		authed.Handle("GET /api/v1/platforms/{id}/ip-load", HandleIPLoad(cp))

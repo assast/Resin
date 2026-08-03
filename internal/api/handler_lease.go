@@ -202,6 +202,84 @@ func HandleDeleteAllLeases(cp *service.ControlPlaneService) http.HandlerFunc {
 	}
 }
 
+type bulkDeleteLeasesRequest struct {
+	Accounts []string `json:"accounts"`
+	Filter   *struct {
+		Account  string `json:"account"`
+		Node     string `json:"node"`
+		EgressIP string `json:"egress_ip"`
+		Fuzzy    *bool  `json:"fuzzy"`
+	} `json:"filter"`
+}
+
+// HandleBulkDeleteLeases returns a handler for POST /api/v1/platforms/{id}/leases/actions/bulk-delete.
+func HandleBulkDeleteLeases(cp *service.ControlPlaneService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		platformID, ok := requireUUIDPathParam(w, r, "id", "platform_id")
+		if !ok {
+			return
+		}
+
+		var req bulkDeleteLeasesRequest
+		if err := DecodeBody(r, &req); err != nil {
+			writeDecodeBodyError(w, err)
+			return
+		}
+
+		hasAccounts := len(req.Accounts) > 0
+		hasFilter := req.Filter != nil
+		if hasAccounts == hasFilter {
+			// both or neither
+			writeInvalidArgument(w, "request: provide exactly one of accounts or filter")
+			return
+		}
+
+		var accounts []string
+		if hasAccounts {
+			for _, a := range req.Accounts {
+				a = strings.TrimSpace(a)
+				if a == "" {
+					writeInvalidArgument(w, "accounts: entries must be non-empty")
+					return
+				}
+				accounts = append(accounts, a)
+			}
+			if len(accounts) == 0 {
+				writeInvalidArgument(w, "accounts: must be a non-empty array")
+				return
+			}
+		} else {
+			f := req.Filter
+			account := strings.TrimSpace(f.Account)
+			node := strings.TrimSpace(f.Node)
+			egressIP := strings.TrimSpace(f.EgressIP)
+			if account == "" && node == "" && egressIP == "" {
+				writeInvalidArgument(w, "filter: at least one of account, node, egress_ip is required")
+				return
+			}
+			fuzzy := f.Fuzzy != nil && *f.Fuzzy
+
+			leases, err := cp.ListLeases(platformID)
+			if err != nil {
+				writeServiceError(w, err)
+				return
+			}
+			matched := filterLeases(leases, account, node, egressIP, fuzzy)
+			accounts = make([]string, 0, len(matched))
+			for _, lease := range matched {
+				accounts = append(accounts, lease.Account)
+			}
+		}
+
+		result, err := cp.BulkDeleteLeases(platformID, accounts)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		WriteJSON(w, http.StatusOK, result)
+	}
+}
+
 // HandleIPLoad returns a handler for GET /api/v1/platforms/{id}/ip-load.
 func HandleIPLoad(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

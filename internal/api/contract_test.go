@@ -2019,3 +2019,166 @@ func TestAPIContract_MetricsEndpoints(t *testing.T) {
 	}
 	assertErrorCode(t, rec, "INVALID_ARGUMENT")
 }
+
+func TestAPIContract_BulkDeleteLeases_ByAccounts(t *testing.T) {
+	srv, cp, _ := newControlPlaneTestServer(t)
+	platformID := mustCreatePlatform(t, srv, "lease-bulk-accounts")
+	hash := node.HashFromRawOptions([]byte(`{"type":"ss","server":"203.0.113.30","port":443}`))
+	now := time.Now().UnixNano()
+	cp.Router.RestoreLeases([]model.Lease{
+		{
+			PlatformID:     platformID,
+			Account:        "user-a",
+			NodeHash:       hash.Hex(),
+			EgressIP:       "203.0.113.30",
+			ExpiryNs:       now + int64(time.Hour),
+			LastAccessedNs: now,
+		},
+		{
+			PlatformID:     platformID,
+			Account:        "user-b",
+			NodeHash:       hash.Hex(),
+			EgressIP:       "203.0.113.31",
+			ExpiryNs:       now + int64(time.Hour),
+			LastAccessedNs: now,
+		},
+	})
+
+	rec := doJSONRequest(
+		t,
+		srv,
+		http.MethodPost,
+		"/api/v1/platforms/"+platformID+"/leases/actions/bulk-delete",
+		map[string]any{"accounts": []string{"user-a", "missing"}},
+		true,
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := decodeJSONMap(t, rec)
+	if body["deleted"] != float64(1) {
+		t.Fatalf("deleted: got %v, want 1", body["deleted"])
+	}
+	if body["not_found"] != float64(1) {
+		t.Fatalf("not_found: got %v, want 1", body["not_found"])
+	}
+
+	listRec := doJSONRequest(t, srv, http.MethodGet, "/api/v1/platforms/"+platformID+"/leases", nil, true)
+	listBody := decodeJSONMap(t, listRec)
+	items, ok := listBody["items"].([]any)
+	if !ok {
+		t.Fatalf("items type: got %T", listBody["items"])
+	}
+	if len(items) != 1 {
+		t.Fatalf("remaining leases: got %d, want 1, body=%s", len(items), listRec.Body.String())
+	}
+	row := items[0].(map[string]any)
+	if row["account"] != "user-b" {
+		t.Fatalf("remaining account: got %v, want user-b", row["account"])
+	}
+}
+
+func TestAPIContract_BulkDeleteLeases_ByFilter(t *testing.T) {
+	srv, cp, _ := newControlPlaneTestServer(t)
+	platformID := mustCreatePlatform(t, srv, "lease-bulk-filter")
+	hash := node.HashFromRawOptions([]byte(`{"type":"ss","server":"203.0.113.40","port":443}`))
+	now := time.Now().UnixNano()
+	cp.Router.RestoreLeases([]model.Lease{
+		{
+			PlatformID:     platformID,
+			Account:        "alpha-user",
+			NodeHash:       hash.Hex(),
+			EgressIP:       "203.0.113.40",
+			ExpiryNs:       now + int64(time.Hour),
+			LastAccessedNs: now,
+		},
+		{
+			PlatformID:     platformID,
+			Account:        "beta-user",
+			NodeHash:       hash.Hex(),
+			EgressIP:       "203.0.113.41",
+			ExpiryNs:       now + int64(time.Hour),
+			LastAccessedNs: now,
+		},
+		{
+			PlatformID:     platformID,
+			Account:        "other",
+			NodeHash:       hash.Hex(),
+			EgressIP:       "203.0.113.42",
+			ExpiryNs:       now + int64(time.Hour),
+			LastAccessedNs: now,
+		},
+	})
+
+	fuzzy := true
+	rec := doJSONRequest(
+		t,
+		srv,
+		http.MethodPost,
+		"/api/v1/platforms/"+platformID+"/leases/actions/bulk-delete",
+		map[string]any{
+			"filter": map[string]any{
+				"account": "user",
+				"fuzzy":   fuzzy,
+			},
+		},
+		true,
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := decodeJSONMap(t, rec)
+	if body["deleted"] != float64(2) {
+		t.Fatalf("deleted: got %v, want 2, body=%s", body["deleted"], rec.Body.String())
+	}
+
+	listRec := doJSONRequest(t, srv, http.MethodGet, "/api/v1/platforms/"+platformID+"/leases", nil, true)
+	listBody := decodeJSONMap(t, listRec)
+	items, ok := listBody["items"].([]any)
+	if !ok {
+		t.Fatalf("items type: got %T", listBody["items"])
+	}
+	if len(items) != 1 {
+		t.Fatalf("remaining leases: got %d, want 1, body=%s", len(items), listRec.Body.String())
+	}
+	row := items[0].(map[string]any)
+	if row["account"] != "other" {
+		t.Fatalf("remaining account: got %v, want other", row["account"])
+	}
+}
+
+func TestAPIContract_BulkDeleteLeases_InvalidBody(t *testing.T) {
+	srv, _, _ := newControlPlaneTestServer(t)
+	platformID := mustCreatePlatform(t, srv, "lease-bulk-invalid")
+
+	cases := []struct {
+		name string
+		body any
+	}{
+		{name: "empty object", body: map[string]any{}},
+		{name: "empty accounts", body: map[string]any{"accounts": []string{}}},
+		{name: "empty filter", body: map[string]any{"filter": map[string]any{}}},
+		{
+			name: "both accounts and filter",
+			body: map[string]any{
+				"accounts": []string{"a"},
+				"filter":   map[string]any{"account": "a"},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := doJSONRequest(
+				t,
+				srv,
+				http.MethodPost,
+				"/api/v1/platforms/"+platformID+"/leases/actions/bulk-delete",
+				tc.body,
+				true,
+			)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status: got %d, want %d, body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+		})
+	}
+}

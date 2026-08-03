@@ -378,3 +378,54 @@ func TestInheritLeaseByPlatformName_InvalidArguments(t *testing.T) {
 		})
 	}
 }
+
+func TestBulkDeleteLeases_AccountsMode(t *testing.T) {
+	cp, plat := newLeaseInheritanceTestService()
+	hash := node.HashFromRawOptions([]byte(`{"type":"ss","server":"198.51.100.20","port":443}`))
+	now := time.Now().UnixNano()
+	seedLease(t, cp, model.Lease{
+		PlatformID:     plat.ID,
+		Account:        "keep-me",
+		NodeHash:       hash.Hex(),
+		EgressIP:       "203.0.113.20",
+		CreatedAtNs:    now,
+		ExpiryNs:       now + int64(time.Hour),
+		LastAccessedNs: now,
+	})
+	seedLease(t, cp, model.Lease{
+		PlatformID:     plat.ID,
+		Account:        "drop-me",
+		NodeHash:       hash.Hex(),
+		EgressIP:       "203.0.113.21",
+		CreatedAtNs:    now,
+		ExpiryNs:       now + int64(time.Hour),
+		LastAccessedNs: now,
+	})
+
+	result, err := cp.BulkDeleteLeases(plat.ID, []string{"drop-me", "missing", "  "})
+	if err != nil {
+		t.Fatalf("BulkDeleteLeases: %v", err)
+	}
+	if result.Deleted != 1 {
+		t.Fatalf("deleted: got %d, want 1", result.Deleted)
+	}
+	if result.NotFound != 2 {
+		t.Fatalf("not_found: got %d, want 2", result.NotFound)
+	}
+
+	if _, err := cp.GetLease(plat.ID, "drop-me"); err == nil {
+		t.Fatal("expected drop-me lease to be gone")
+	}
+	if _, err := cp.GetLease(plat.ID, "keep-me"); err != nil {
+		t.Fatalf("keep-me should remain: %v", err)
+	}
+}
+
+func TestBulkDeleteLeases_PlatformNotFound(t *testing.T) {
+	cp, _ := newLeaseInheritanceTestService()
+	_, err := cp.BulkDeleteLeases("missing-platform", []string{"a"})
+	if err == nil {
+		t.Fatal("expected NOT_FOUND")
+	}
+	assertServiceErrorCode(t, err, "NOT_FOUND")
+}

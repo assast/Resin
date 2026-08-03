@@ -610,6 +610,25 @@ const EXACT_ZH_TO_EN: Record<string, string> = {
   "租约管理": "Lease Management",
   "查看当前平台的租约绑定，并按账号释放单个租约。":
     "View current lease bindings for this platform and release individual account leases.",
+  "查看当前平台的租约绑定，支持筛选后批量释放或单条释放。":
+    "View current lease bindings for this platform; release by filter bulk or individually.",
+  "全选当前页租约": "Select all leases on this page",
+  "选择账号 {{account}}": "Select account {{account}}",
+  "已选 {{selected}} 条": "Selected {{selected}}",
+  "未选中": "None selected",
+  " / 匹配 {{matched}} 条": " / matched {{matched}}",
+  "删除选中 ({{count}})": "Delete selected ({{count}})",
+  "删除全部匹配 ({{count}})": "Delete all matching ({{count}})",
+  "按当前筛选条件删除全部匹配租约": "Delete all leases matching the current filters",
+  "请先设置筛选条件；清空全部请使用「清除所有租约」":
+    "Set a filter first; use Clear All Leases to wipe the whole platform",
+  "已删除 {{deleted}} 条租约": "Deleted {{deleted}} leases",
+  "确认删除选中的 {{count}} 条租约？\n\n{{preview}}":
+    "Delete {{count}} selected leases?\n\n{{preview}}",
+  "共 {{count}} 个账号（前 20 个：{{preview}}…）":
+    "{{count}} accounts (first 20: {{preview}}…)",
+  "确认删除全部匹配的 {{count}} 条租约？\n\n筛选条件：{{filters}}\n\n将释放这些账号的粘性绑定，下次请求会重新分配出口。":
+    "Delete all {{count}} matching leases?\n\nFilters: {{filters}}\n\nSticky bindings will be released; the next request gets a new egress.",
   "正在加载租约数据...": "Loading leases...",
   "当前平台暂无租约": "No leases for this platform",
   "重置、清租约、删除操作": "Reset, clear leases, and delete operations",

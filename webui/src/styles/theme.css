@@ -2757,6 +2757,31 @@ a {
   flex-shrink: 0;
 }
 
+.platform-lease-bulk-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid rgba(37, 72, 120, 0.14);
+  border-radius: 12px;
+  background: rgba(239, 246, 255, 0.72);
+}
+
+.platform-lease-bulk-summary {
+  font-size: 13px;
+  color: #253d5f;
+  font-weight: 600;
+}
+
+.platform-lease-bulk-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .platform-lease-table-wrap {
   margin-top: 0;
   max-height: 420px;
