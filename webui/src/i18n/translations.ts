@@ -323,12 +323,28 @@ const EXACT_ZH_TO_EN: Record<string, string> = {
     "All includes must match; lines starting with ! are exclusions",
   "按账号筛选租约": "Filter leases by account",
   "搜索账号": "Search account",
+  "生成租约": "Generate leases",
+  "按节点": "By node",
+  "按出口 IP": "By egress IP",
+  "生成模式": "Generation mode",
+  "选择生成模式并填写租约保持时长与账号前缀。":
+    "Choose a generation mode and enter the lease duration and account prefix.",
+  "在弹窗中选择按节点或按出口 IP生成，并填写生成参数。":
+    "Choose by node or by egress IP in the dialog and enter the generation parameters.",
+  "每个唯一出口 IP生成一条租约，共享 IP的节点只保留一个代表节点。":
+    "Generate one lease per unique egress IP; shared-IP nodes use one representative node.",
+  "每个当前可路由节点生成一条租约，按节点 tag和 hash稳定编号。":
+    "Generate one lease per currently routable node, numbered stably by node tag and hash.",
   "按节点生成租约": "Generate leases by node",
   "账号前缀": "Account prefix",
   "前缀": "prefix",
   "例如 24h": "e.g. 24h",
   "例如 user": "e.g. user",
   "生成中...": "Generating...",
+  "确认生成": "Generate",
+  "关闭弹窗": "Close dialog",
+  "生成租约的保持时长": "Lease duration for lease generation",
+  "生成租约的账号前缀": "Account prefix for lease generation",
   "按节点生成租约的保持时长": "Lease duration for node generation",
   "按节点生成租约的账号前缀": "Account prefix for node generation",
   "按当前可路由节点的 tag 升序生成 {{prefix}}_1、{{prefix}}_2…；重复生成会覆盖同名账号，节点减少时不会删除多余租约。":
@@ -702,6 +718,7 @@ const EXACT_ZH_TO_EN: Record<string, string> = {
   "平台 {{name}} 已重置为默认配置": "Platform {{name}} reset to defaults",
   "平台 {{name}} 的所有租约已清除": "All leases for platform {{name}} cleared",
   "已按 {{count}} 个节点生成租约": "Generated leases for {{count}} nodes",
+  "已按 {{count}} 个出口 IP生成租约": "Generated leases for {{count}} egress IPs",
   "账号 {{account}} 的租约已释放": "Lease for account {{account}} released",
   "请求日志详情 {{id}}": "Request log details {{id}}",
   "确认立即清理订阅 {{name}} 中的熔断或异常节点？":

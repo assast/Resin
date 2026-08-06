@@ -375,6 +375,108 @@ func TestGenerateLeasesByNode_ValidatesArguments(t *testing.T) {
 	}
 }
 
+func TestGenerateLeasesByEgressIP_DeduplicatesAndKeepsTrailingLeases(t *testing.T) {
+	cp, plat := newLeaseInheritanceTestService()
+	sub := subscription.NewSubscription("sub-generate-ip", "Generate IP", "https://example.com/generate-ip", true, false)
+	cp.SubMgr.Register(sub)
+
+	hashSharedFirst := addRoutableNodeForSubscriptionWithTag(
+		t,
+		cp.Pool,
+		sub,
+		[]byte(`{"id":"generate-ip-shared-first"}`),
+		"203.0.113.40",
+		"a",
+	)
+	_ = addRoutableNodeForSubscriptionWithTag(
+		t,
+		cp.Pool,
+		sub,
+		[]byte(`{"id":"generate-ip-shared-later"}`),
+		"203.0.113.40",
+		"z",
+	)
+	hashSecond := addRoutableNodeForSubscriptionWithTag(
+		t,
+		cp.Pool,
+		sub,
+		[]byte(`{"id":"generate-ip-second"}`),
+		"203.0.113.41",
+		"b",
+	)
+	hashThird := addRoutableNodeForSubscriptionWithTag(
+		t,
+		cp.Pool,
+		sub,
+		[]byte(`{"id":"generate-ip-third"}`),
+		"203.0.113.42",
+		"c",
+	)
+
+	first, err := cp.GenerateLeasesByEgressIP(plat.ID, "ipacct", time.Hour)
+	if err != nil {
+		t.Fatalf("GenerateLeasesByEgressIP(first): %v", err)
+	}
+	if first.Generated != 3 || first.EgressIPCount != 3 {
+		t.Fatalf("first result: got %+v, want generated/egress_ip_count=3", first)
+	}
+
+	assertLease := func(account string, wantHash node.Hash, wantIP string) *model.Lease {
+		t.Helper()
+		lease := cp.Router.ReadLease(model.LeaseKey{PlatformID: plat.ID, Account: account})
+		if lease == nil {
+			t.Fatalf("missing lease %q", account)
+		}
+		if lease.NodeHash != wantHash.Hex() || lease.EgressIP != wantIP {
+			t.Fatalf("lease %q: got node=%q ip=%q, want node=%q ip=%q", account, lease.NodeHash, lease.EgressIP, wantHash.Hex(), wantIP)
+		}
+		return lease
+	}
+	firstLease := assertLease("ipacct_1", hashSharedFirst, "203.0.113.40")
+	assertLease("ipacct_2", hashSecond, "203.0.113.41")
+	trailingBeforeShrink := assertLease("ipacct_3", hashThird, "203.0.113.42")
+
+	cp.Pool.RemoveNodeFromSub(hashThird, sub.ID)
+	second, err := cp.GenerateLeasesByEgressIP(plat.ID, "ipacct", 2*time.Hour)
+	if err != nil {
+		t.Fatalf("GenerateLeasesByEgressIP(second): %v", err)
+	}
+	if second.Generated != 2 || second.EgressIPCount != 2 {
+		t.Fatalf("second result: got %+v, want generated/egress_ip_count=2", second)
+	}
+	updatedFirst := cp.Router.ReadLease(model.LeaseKey{PlatformID: plat.ID, Account: "ipacct_1"})
+	if updatedFirst == nil || updatedFirst.ExpiryNs <= firstLease.ExpiryNs {
+		t.Fatalf("generated lease was not overwritten: before=%+v after=%+v", firstLease, updatedFirst)
+	}
+	trailingAfterShrink := cp.Router.ReadLease(model.LeaseKey{PlatformID: plat.ID, Account: "ipacct_3"})
+	if trailingAfterShrink == nil || *trailingAfterShrink != *trailingBeforeShrink {
+		t.Fatalf("trailing lease changed after IP count decrease: before=%+v after=%+v", trailingBeforeShrink, trailingAfterShrink)
+	}
+}
+
+func TestGenerateLeasesByEgressIP_ValidatesArguments(t *testing.T) {
+	cp, plat := newLeaseInheritanceTestService()
+
+	cases := []struct {
+		name   string
+		prefix string
+		ttl    time.Duration
+	}{
+		{name: "empty prefix", prefix: "  ", ttl: time.Hour},
+		{name: "non-positive duration", prefix: "acct", ttl: 0},
+		{name: "negative duration", prefix: "acct", ttl: -time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := cp.GenerateLeasesByEgressIP(plat.ID, tc.prefix, tc.ttl)
+			if err == nil {
+				t.Fatal("expected INVALID_ARGUMENT")
+			}
+			assertServiceErrorCode(t, err, "INVALID_ARGUMENT")
+		})
+	}
+}
+
 func TestInheritLeaseByPlatformName_OverwritesExistingTargetLease(t *testing.T) {
 	cp, plat := newLeaseInheritanceTestService()
 

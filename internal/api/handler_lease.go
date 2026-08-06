@@ -203,9 +203,29 @@ func HandleDeleteAllLeases(cp *service.ControlPlaneService) http.HandlerFunc {
 	}
 }
 
-type generateLeasesByNodeRequest struct {
+type generateLeasesRequest struct {
 	Duration      string `json:"duration"`
 	AccountPrefix string `json:"account_prefix"`
+}
+
+func parseGenerateLeasesRequest(w http.ResponseWriter, r *http.Request) (generateLeasesRequest, time.Duration, bool) {
+	var req generateLeasesRequest
+	if err := DecodeBody(r, &req); err != nil {
+		writeDecodeBodyError(w, err)
+		return generateLeasesRequest{}, 0, false
+	}
+
+	duration := strings.TrimSpace(req.Duration)
+	if duration == "" {
+		writeInvalidArgument(w, "duration: must be non-empty")
+		return generateLeasesRequest{}, 0, false
+	}
+	leaseTTL, err := time.ParseDuration(duration)
+	if err != nil {
+		writeInvalidArgument(w, "duration: "+err.Error())
+		return generateLeasesRequest{}, 0, false
+	}
+	return req, leaseTTL, true
 }
 
 // HandleGenerateLeasesByNode returns a handler for
@@ -217,24 +237,35 @@ func HandleGenerateLeasesByNode(cp *service.ControlPlaneService) http.HandlerFun
 			return
 		}
 
-		var req generateLeasesByNodeRequest
-		if err := DecodeBody(r, &req); err != nil {
-			writeDecodeBodyError(w, err)
-			return
-		}
-
-		duration := strings.TrimSpace(req.Duration)
-		if duration == "" {
-			writeInvalidArgument(w, "duration: must be non-empty")
-			return
-		}
-		leaseTTL, err := time.ParseDuration(duration)
-		if err != nil {
-			writeInvalidArgument(w, "duration: "+err.Error())
+		req, leaseTTL, ok := parseGenerateLeasesRequest(w, r)
+		if !ok {
 			return
 		}
 
 		result, err := cp.GenerateLeasesByNode(platformID, req.AccountPrefix, leaseTTL)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		WriteJSON(w, http.StatusOK, result)
+	}
+}
+
+// HandleGenerateLeasesByEgressIP returns a handler for
+// POST /api/v1/platforms/{id}/leases/actions/generate-by-egress-ip.
+func HandleGenerateLeasesByEgressIP(cp *service.ControlPlaneService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		platformID, ok := requireUUIDPathParam(w, r, "id", "platform_id")
+		if !ok {
+			return
+		}
+
+		req, leaseTTL, ok := parseGenerateLeasesRequest(w, r)
+		if !ok {
+			return
+		}
+
+		result, err := cp.GenerateLeasesByEgressIP(platformID, req.AccountPrefix, leaseTTL)
 		if err != nil {
 			writeServiceError(w, err)
 			return

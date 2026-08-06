@@ -2494,6 +2494,23 @@ a {
   padding: 18px;
 }
 
+.lease-generation-modal-card {
+  width: min(560px, 100%);
+}
+
+.lease-generation-modal-form {
+  gap: 14px;
+}
+
+.lease-generation-mode-hint {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.lease-generation-modal-actions {
+  margin-top: 2px;
+}
+
 .drawer-overlay {
   position: fixed;
   inset: 0;

@@ -1,7 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { AlertTriangle, ArrowLeft, Info, RefreshCw, Search, Sparkles, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Info, RefreshCw, Search, Sparkles, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
@@ -24,6 +24,7 @@ import {
   clearAllPlatformLeases,
   deletePlatform,
   deletePlatformLease,
+  generatePlatformLeasesByEgressIP,
   generatePlatformLeasesByNode,
   getPlatform,
   listPlatformLeases,
@@ -70,9 +71,12 @@ function leaseSortIndicator(active: boolean, order: SortOrder): string {
 }
 
 type LeaseGenerationSettings = {
+  mode: LeaseGenerationMode;
   duration: string;
   accountPrefix: string;
 };
+
+type LeaseGenerationMode = "node" | "egress_ip";
 
 const LEASE_GENERATION_STORAGE_KEY_PREFIX = "resin:platform-lease-generation:";
 
@@ -91,6 +95,7 @@ function readLeaseGenerationSettings(platformId: string): LeaseGenerationSetting
       return null;
     }
     return {
+      mode: parsed.mode === "egress_ip" ? "egress_ip" : "node",
       duration: parsed.duration,
       accountPrefix: parsed.accountPrefix,
     };
@@ -124,6 +129,8 @@ export function PlatformDetailPage() {
   const [leaseSortBy, setLeaseSortBy] = useState<PlatformLeaseSortBy>("expiry");
   const [leaseSortOrder, setLeaseSortOrder] = useState<SortOrder>("asc");
   const [selectedLeaseAccounts, setSelectedLeaseAccounts] = useState<Set<string>>(() => new Set());
+  const [leaseGenerationModalOpen, setLeaseGenerationModalOpen] = useState(false);
+  const [leaseGenerationMode, setLeaseGenerationMode] = useState<LeaseGenerationMode>("node");
   const [leaseGenerationDuration, setLeaseGenerationDuration] = useState("");
   const [leaseGenerationPrefix, setLeaseGenerationPrefix] = useState("");
   const [leaseGenerationSettingsPlatformId, setLeaseGenerationSettingsPlatformId] = useState("");
@@ -217,6 +224,8 @@ export function PlatformDetailPage() {
     setLeaseSortBy("expiry");
     setLeaseSortOrder("asc");
     setSelectedLeaseAccounts(new Set());
+    setLeaseGenerationModalOpen(false);
+    setLeaseGenerationMode("node");
     setLeaseGenerationDuration("");
     setLeaseGenerationPrefix("");
     setLeaseGenerationSettingsPlatformId("");
@@ -227,6 +236,7 @@ export function PlatformDetailPage() {
       return;
     }
     const stored = readLeaseGenerationSettings(platform.id);
+    setLeaseGenerationMode(stored?.mode ?? "node");
     setLeaseGenerationDuration(stored?.duration ?? platform.sticky_ttl);
     setLeaseGenerationPrefix(stored?.accountPrefix ?? "");
     setLeaseGenerationSettingsPlatformId(platform.id);
@@ -365,15 +375,22 @@ export function PlatformDetailPage() {
         throw new Error("账号前缀不能为空");
       }
       writeLeaseGenerationSettings(platform.id, {
+        mode: leaseGenerationMode,
         duration: leaseGenerationDuration,
         accountPrefix: leaseGenerationPrefix,
       });
-      return generatePlatformLeasesByNode(platform.id, {
+      const input = {
         duration,
         account_prefix: accountPrefix,
-      });
+      };
+      if (leaseGenerationMode === "egress_ip") {
+        const result = await generatePlatformLeasesByEgressIP(platform.id, input);
+        return { mode: leaseGenerationMode, result };
+      }
+      const result = await generatePlatformLeasesByNode(platform.id, input);
+      return { mode: leaseGenerationMode, result };
     },
-    onSuccess: async (result) => {
+    onSuccess: async ({ mode, result }) => {
       if (platform) {
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: ["platform-monitor"] }),
@@ -381,7 +398,13 @@ export function PlatformDetailPage() {
         ]);
       }
       setSelectedLeaseAccounts(new Set());
-      showToast("success", t("已按 {{count}} 个节点生成租约", { count: result.generated }));
+      setLeaseGenerationModalOpen(false);
+      showToast(
+        "success",
+        t(mode === "egress_ip" ? "已按 {{count}} 个出口 IP生成租约" : "已按 {{count}} 个节点生成租约", {
+          count: result.generated,
+        }),
+      );
     },
     onError: (error) => {
       showToast("error", formatApiErrorMessage(error, t));
@@ -502,10 +525,6 @@ export function PlatformDetailPage() {
       return;
     }
     await clearLeasesMutation.mutateAsync();
-  };
-
-  const handleGenerateLeasesByNode = async () => {
-    await generateLeasesMutation.mutateAsync();
   };
 
   const handleReleaseLease = async (lease: PlatformLease) => {
@@ -1146,64 +1165,19 @@ export function PlatformDetailPage() {
 
                   <div className="platform-lease-generator">
                     <div className="platform-op-copy">
-                      <h5>{t("按节点生成租约")}</h5>
+                      <h5>{t("生成租约")}</h5>
                       <p className="platform-op-hint">
-                        {t("按当前可路由节点的 tag 升序生成 {{prefix}}_1、{{prefix}}_2…；重复生成会覆盖同名账号，节点减少时不会删除多余租约。", {
-                          prefix: leaseGenerationPrefix.trim() || t("前缀"),
-                        })}
+                        {t("在弹窗中选择按节点或按出口 IP生成，并填写生成参数。")}
                       </p>
                     </div>
-                    <div className="platform-lease-generator-controls">
-                      <label className="field-group platform-lease-generator-field" htmlFor="platform-lease-generation-duration">
-                        <span className="field-label">{t("租约保持时长")}</span>
-                        <Input
-                          id="platform-lease-generation-duration"
-                          placeholder={t("例如 24h")}
-                          value={leaseGenerationDuration}
-                          onChange={(event) => {
-                            const duration = event.target.value;
-                            setLeaseGenerationDuration(duration);
-                            if (platform) {
-                              writeLeaseGenerationSettings(platform.id, {
-                                duration,
-                                accountPrefix: leaseGenerationPrefix,
-                              });
-                            }
-                          }}
-                          aria-label={t("按节点生成租约的保持时长")}
-                          disabled={bulkBusy}
-                        />
-                      </label>
-                      <label className="field-group platform-lease-generator-field" htmlFor="platform-lease-generation-prefix">
-                        <span className="field-label">{t("账号前缀")}</span>
-                        <Input
-                          id="platform-lease-generation-prefix"
-                          placeholder={t("例如 user")}
-                          value={leaseGenerationPrefix}
-                          onChange={(event) => {
-                            const accountPrefix = event.target.value;
-                            setLeaseGenerationPrefix(accountPrefix);
-                            if (platform) {
-                              writeLeaseGenerationSettings(platform.id, {
-                                duration: leaseGenerationDuration,
-                                accountPrefix,
-                              });
-                            }
-                          }}
-                          aria-label={t("按节点生成租约的账号前缀")}
-                          disabled={bulkBusy}
-                        />
-                      </label>
-                      <Button
-                        size="sm"
-                        onClick={() => void handleGenerateLeasesByNode()}
-                        disabled={
-                          bulkBusy || !leaseGenerationDuration.trim() || !leaseGenerationPrefix.trim()
-                        }
-                      >
-                        {generateLeasesMutation.isPending ? t("生成中...") : t("按节点生成租约")}
-                      </Button>
-                    </div>
+                    <Button
+                      size="sm"
+                      onClick={() => setLeaseGenerationModalOpen(true)}
+                      disabled={bulkBusy}
+                    >
+                      <Sparkles size={16} />
+                      {t("生成租约")}
+                    </Button>
                   </div>
 
                   {leaseQuery.isLoading ? <p className="muted">{t("正在加载租约数据...")}</p> : null}
@@ -1281,6 +1255,142 @@ export function PlatformDetailPage() {
               </div>
             ) : null}
           </Card>
+
+          {leaseGenerationModalOpen ? (
+            <div
+              className="modal-overlay"
+              role="dialog"
+              aria-modal="true"
+              aria-label={t("生成租约")}
+              onClick={() => {
+                if (!generateLeasesMutation.isPending) {
+                  setLeaseGenerationModalOpen(false);
+                }
+              }}
+            >
+              <Card className="modal-card lease-generation-modal-card" onClick={(event) => event.stopPropagation()}>
+                <div className="modal-header">
+                  <div>
+                    <h3>{t("生成租约")}</h3>
+                    <p>{t("选择生成模式并填写租约保持时长与账号前缀。")}</p>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setLeaseGenerationModalOpen(false)}
+                    disabled={generateLeasesMutation.isPending}
+                    aria-label={t("关闭弹窗")}
+                  >
+                    <X size={16} />
+                  </Button>
+                </div>
+
+                <form
+                  className="form-grid single-column lease-generation-modal-form"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void generateLeasesMutation.mutateAsync();
+                  }}
+                >
+                  <label className="field-group" htmlFor="platform-lease-generation-mode">
+                    <span className="field-label">{t("生成模式")}</span>
+                    <Select
+                      id="platform-lease-generation-mode"
+                      value={leaseGenerationMode}
+                      onChange={(event) => {
+                        const mode = event.target.value as LeaseGenerationMode;
+                        setLeaseGenerationMode(mode);
+                        if (platform) {
+                          writeLeaseGenerationSettings(platform.id, {
+                            mode,
+                            duration: leaseGenerationDuration,
+                            accountPrefix: leaseGenerationPrefix,
+                          });
+                        }
+                      }}
+                      aria-label={t("生成模式")}
+                      disabled={generateLeasesMutation.isPending}
+                    >
+                      <option value="node">{t("按节点")}</option>
+                      <option value="egress_ip">{t("按出口 IP")}</option>
+                    </Select>
+                    <span className="muted lease-generation-mode-hint">
+                      {t(
+                        leaseGenerationMode === "egress_ip"
+                          ? "每个唯一出口 IP生成一条租约，共享 IP的节点只保留一个代表节点。"
+                          : "每个当前可路由节点生成一条租约，按节点 tag和 hash稳定编号。",
+                      )}
+                    </span>
+                  </label>
+
+                  <label className="field-group" htmlFor="platform-lease-generation-duration">
+                    <span className="field-label">{t("租约保持时长")}</span>
+                    <Input
+                      id="platform-lease-generation-duration"
+                      placeholder={t("例如 24h")}
+                      value={leaseGenerationDuration}
+                      onChange={(event) => {
+                        const duration = event.target.value;
+                        setLeaseGenerationDuration(duration);
+                        if (platform) {
+                          writeLeaseGenerationSettings(platform.id, {
+                            mode: leaseGenerationMode,
+                            duration,
+                            accountPrefix: leaseGenerationPrefix,
+                          });
+                        }
+                      }}
+                      aria-label={t("生成租约的保持时长")}
+                      disabled={generateLeasesMutation.isPending}
+                    />
+                  </label>
+
+                  <label className="field-group" htmlFor="platform-lease-generation-prefix">
+                    <span className="field-label">{t("账号前缀")}</span>
+                    <Input
+                      id="platform-lease-generation-prefix"
+                      placeholder={t("例如 user")}
+                      value={leaseGenerationPrefix}
+                      onChange={(event) => {
+                        const accountPrefix = event.target.value;
+                        setLeaseGenerationPrefix(accountPrefix);
+                        if (platform) {
+                          writeLeaseGenerationSettings(platform.id, {
+                            mode: leaseGenerationMode,
+                            duration: leaseGenerationDuration,
+                            accountPrefix,
+                          });
+                        }
+                      }}
+                      aria-label={t("生成租约的账号前缀")}
+                      disabled={generateLeasesMutation.isPending}
+                    />
+                  </label>
+
+                  <div className="detail-actions lease-generation-modal-actions" style={{ justifyContent: "flex-end" }}>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => setLeaseGenerationModalOpen(false)}
+                      disabled={generateLeasesMutation.isPending}
+                    >
+                      {t("取消")}
+                    </Button>
+                    <Button
+                      type="submit"
+                      disabled={
+                        generateLeasesMutation.isPending ||
+                        !leaseGenerationDuration.trim() ||
+                        !leaseGenerationPrefix.trim()
+                      }
+                    >
+                      {generateLeasesMutation.isPending ? t("生成中...") : t("确认生成")}
+                    </Button>
+                  </div>
+                </form>
+              </Card>
+            </div>
+          ) : null}
         </>
       ) : null}
     </section>

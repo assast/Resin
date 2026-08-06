@@ -32,6 +32,25 @@ type GenerateLeasesByNodeResult struct {
 	NodeCount int `json:"node_count"`
 }
 
+// GenerateLeasesByEgressIPResult describes an egress-IP-based lease generation run.
+type GenerateLeasesByEgressIPResult struct {
+	Generated     int `json:"generated"`
+	EgressIPCount int `json:"egress_ip_count"`
+}
+
+type leaseGenerationMode uint8
+
+const (
+	leaseGenerationByNode leaseGenerationMode = iota
+	leaseGenerationByEgressIP
+)
+
+type leaseGenerationCandidate struct {
+	hash     node.Hash
+	tag      string
+	egressIP string
+}
+
 func leaseToResponse(lease model.Lease, nodeTag string) LeaseResponse {
 	return LeaseResponse{
 		PlatformID:   lease.PlatformID,
@@ -144,25 +163,54 @@ func (s *ControlPlaneService) GenerateLeasesByNode(
 	platformID, accountPrefix string,
 	leaseTTL time.Duration,
 ) (*GenerateLeasesByNodeResult, error) {
+	generated, err := s.generateLeases(platformID, accountPrefix, leaseTTL, leaseGenerationByNode)
+	if err != nil {
+		return nil, err
+	}
+
+	return &GenerateLeasesByNodeResult{
+		Generated: generated,
+		NodeCount: generated,
+	}, nil
+}
+
+// GenerateLeasesByEgressIP creates one lease for each unique egress IP on the
+// currently routable nodes. The first node in stable tag/hash order represents
+// each IP.
+func (s *ControlPlaneService) GenerateLeasesByEgressIP(
+	platformID, accountPrefix string,
+	leaseTTL time.Duration,
+) (*GenerateLeasesByEgressIPResult, error) {
+	generated, err := s.generateLeases(platformID, accountPrefix, leaseTTL, leaseGenerationByEgressIP)
+	if err != nil {
+		return nil, err
+	}
+
+	return &GenerateLeasesByEgressIPResult{
+		Generated:     generated,
+		EgressIPCount: generated,
+	}, nil
+}
+
+func (s *ControlPlaneService) generateLeases(
+	platformID, accountPrefix string,
+	leaseTTL time.Duration,
+	mode leaseGenerationMode,
+) (int, error) {
 	plat, ok := s.Pool.GetPlatform(platformID)
 	if !ok || plat == nil {
-		return nil, notFound("platform not found")
+		return 0, notFound("platform not found")
 	}
 
 	accountPrefix = strings.TrimSpace(accountPrefix)
 	if accountPrefix == "" {
-		return nil, invalidArg("account_prefix: must be non-empty")
+		return 0, invalidArg("account_prefix: must be non-empty")
 	}
 	if leaseTTL <= 0 {
-		return nil, invalidArg("duration: must be > 0")
+		return 0, invalidArg("duration: must be > 0")
 	}
 
-	type generationNode struct {
-		hash     node.Hash
-		tag      string
-		egressIP string
-	}
-	nodes := make([]generationNode, 0, plat.View().Size())
+	candidates := make([]leaseGenerationCandidate, 0, plat.View().Size())
 	plat.View().Range(func(hash node.Hash) bool {
 		entry, ok := s.Pool.GetEntry(hash)
 		if !ok || entry == nil {
@@ -172,7 +220,7 @@ func (s *ControlPlaneService) GenerateLeasesByNode(
 		if !egressIP.IsValid() {
 			return true
 		}
-		nodes = append(nodes, generationNode{
+		candidates = append(candidates, leaseGenerationCandidate{
 			hash:     hash,
 			tag:      s.resolveLeaseNodeTag(hash),
 			egressIP: egressIP.String(),
@@ -180,15 +228,28 @@ func (s *ControlPlaneService) GenerateLeasesByNode(
 		return true
 	})
 
-	sort.SliceStable(nodes, func(i, j int) bool {
-		if nodes[i].tag != nodes[j].tag {
-			return nodes[i].tag < nodes[j].tag
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].tag != candidates[j].tag {
+			return candidates[i].tag < candidates[j].tag
 		}
-		return nodes[i].hash.Hex() < nodes[j].hash.Hex()
+		return candidates[i].hash.Hex() < candidates[j].hash.Hex()
 	})
 
+	if mode == leaseGenerationByEgressIP {
+		seenIPs := make(map[string]struct{}, len(candidates))
+		uniqueCandidates := make([]leaseGenerationCandidate, 0, len(candidates))
+		for _, candidate := range candidates {
+			if _, seen := seenIPs[candidate.egressIP]; seen {
+				continue
+			}
+			seenIPs[candidate.egressIP] = struct{}{}
+			uniqueCandidates = append(uniqueCandidates, candidate)
+		}
+		candidates = uniqueCandidates
+	}
+
 	nowNs := time.Now().UnixNano()
-	for i, candidate := range nodes {
+	for i, candidate := range candidates {
 		account := fmt.Sprintf("%s_%d", accountPrefix, i+1)
 		if err := s.Router.UpsertLease(model.Lease{
 			PlatformID:     platformID,
@@ -199,14 +260,11 @@ func (s *ControlPlaneService) GenerateLeasesByNode(
 			ExpiryNs:       nowNs + leaseTTL.Nanoseconds(),
 			LastAccessedNs: nowNs,
 		}); err != nil {
-			return nil, internal("generate leases by node", err)
+			return 0, internal("generate leases", err)
 		}
 	}
 
-	return &GenerateLeasesByNodeResult{
-		Generated: len(nodes),
-		NodeCount: len(nodes),
-	}, nil
+	return len(candidates), nil
 }
 
 // DeleteLease removes a single lease.

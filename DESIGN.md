@@ -1784,6 +1784,30 @@ Query（可选）：
 }
 ```
 
+#### 按出口 IP生成租约（Action）
+
+**POST** `/platforms/{platform_id}/leases/actions/generate-by-egress-ip`
+
+请求体与按节点生成相同：
+
+```json
+{
+  "duration": "24h",
+  "account_prefix": "user"
+}
+```
+
+行为：读取当前平台可路由节点，按节点 tag 升序（同 tag 按 node hash）排列，并对有效出口 IP去重。每个唯一出口 IP使用排序后首次出现的节点作为代表节点，从 1 开始生成 `account_prefix_排序号` 租约。已存在的同名账号会被覆盖；如果当前唯一出口 IP数量少于上次生成的数量，只覆盖本次数量对应的账号，尾部旧租约不删除。
+
+返回：
+
+```json
+{
+  "generated": 2,
+  "egress_ip_count": 2
+}
+```
+
 #### 获取租约
 
 **GET** `/platforms/{platform_id}/leases/{account}`

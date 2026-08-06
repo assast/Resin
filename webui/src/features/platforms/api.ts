@@ -182,19 +182,41 @@ export type GeneratePlatformLeasesByNodeInput = {
   account_prefix: string;
 };
 
+export type GeneratePlatformLeasesByEgressIPInput = GeneratePlatformLeasesByNodeInput;
+
 export type GeneratePlatformLeasesByNodeResult = {
   generated: number;
   node_count: number;
 };
 
+export type GeneratePlatformLeasesByEgressIPResult = {
+  generated: number;
+  egress_ip_count: number;
+};
+
+async function generatePlatformLeases<T>(
+  id: string,
+  action: "generate-by-node" | "generate-by-egress-ip",
+  input: GeneratePlatformLeasesByNodeInput,
+): Promise<T> {
+  return apiRequest<T>(`${basePath}/${id}/leases/actions/${action}`, {
+    method: "POST",
+    body: input,
+  });
+}
+
 export async function generatePlatformLeasesByNode(
   id: string,
   input: GeneratePlatformLeasesByNodeInput,
 ): Promise<GeneratePlatformLeasesByNodeResult> {
-  return apiRequest<GeneratePlatformLeasesByNodeResult>(`${basePath}/${id}/leases/actions/generate-by-node`, {
-    method: "POST",
-    body: input,
-  });
+  return generatePlatformLeases<GeneratePlatformLeasesByNodeResult>(id, "generate-by-node", input);
+}
+
+export async function generatePlatformLeasesByEgressIP(
+  id: string,
+  input: GeneratePlatformLeasesByEgressIPInput,
+): Promise<GeneratePlatformLeasesByEgressIPResult> {
+  return generatePlatformLeases<GeneratePlatformLeasesByEgressIPResult>(id, "generate-by-egress-ip", input);
 }
 
 export type BulkDeletePlatformLeasesResult = {
