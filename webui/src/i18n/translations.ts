@@ -323,6 +323,16 @@ const EXACT_ZH_TO_EN: Record<string, string> = {
     "All includes must match; lines starting with ! are exclusions",
   "按账号筛选租约": "Filter leases by account",
   "搜索账号": "Search account",
+  "按节点生成租约": "Generate leases by node",
+  "账号前缀": "Account prefix",
+  "前缀": "prefix",
+  "例如 24h": "e.g. 24h",
+  "例如 user": "e.g. user",
+  "生成中...": "Generating...",
+  "按节点生成租约的保持时长": "Lease duration for node generation",
+  "按节点生成租约的账号前缀": "Account prefix for node generation",
+  "按当前可路由节点的 tag 升序生成 {{prefix}}_1、{{prefix}}_2…；重复生成会覆盖同名账号，节点减少时不会删除多余租约。":
+    "Generate {{prefix}}_1, {{prefix}}_2… in ascending routable-node tag order; repeated runs overwrite matching accounts and do not delete extra leases when nodes decrease.",
   "按节点筛选租约": "Filter leases by node",
   "搜索节点": "Search node",
   "按出口 IP 筛选租约": "Filter leases by egress IP",
@@ -578,6 +588,8 @@ const EXACT_ZH_TO_EN: Record<string, string> = {
   "自定义平台": "Custom",
   "平台 / 账号": "Platform / Account",
   "平台不存在或已被删除": "Platform does not exist or has been deleted",
+  "租约保持时长不能为空": "Lease duration cannot be empty",
+  "账号前缀不能为空": "Account prefix cannot be empty",
   "平台名称不能为空": "Platform name cannot be empty",
   "平台名称不能包含字符 .:|/\\@?#%~": "Platform name cannot contain characters .:|/\\@?#%~",
   "平台名称不能包含空格、Tab、换行、回车":
@@ -689,6 +701,7 @@ const EXACT_ZH_TO_EN: Record<string, string> = {
   "平台 {{name}} 已完成节点池重建": "Platform {{name}} node pool rebuilt",
   "平台 {{name}} 已重置为默认配置": "Platform {{name}} reset to defaults",
   "平台 {{name}} 的所有租约已清除": "All leases for platform {{name}} cleared",
+  "已按 {{count}} 个节点生成租约": "Generated leases for {{count}} nodes",
   "账号 {{account}} 的租约已释放": "Lease for account {{account}} released",
   "请求日志详情 {{id}}": "Request log details {{id}}",
   "确认立即清理订阅 {{name}} 中的熔断或异常节点？":

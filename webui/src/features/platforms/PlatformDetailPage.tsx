@@ -24,6 +24,7 @@ import {
   clearAllPlatformLeases,
   deletePlatform,
   deletePlatformLease,
+  generatePlatformLeasesByNode,
   getPlatform,
   listPlatformLeases,
   resetPlatform,
@@ -68,6 +69,44 @@ function leaseSortIndicator(active: boolean, order: SortOrder): string {
   return order === "asc" ? "▲" : "▼";
 }
 
+type LeaseGenerationSettings = {
+  duration: string;
+  accountPrefix: string;
+};
+
+const LEASE_GENERATION_STORAGE_KEY_PREFIX = "resin:platform-lease-generation:";
+
+function leaseGenerationStorageKey(platformId: string): string {
+  return `${LEASE_GENERATION_STORAGE_KEY_PREFIX}${platformId}`;
+}
+
+function readLeaseGenerationSettings(platformId: string): LeaseGenerationSettings | null {
+  try {
+    const raw = window.localStorage.getItem(leaseGenerationStorageKey(platformId));
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as Partial<LeaseGenerationSettings>;
+    if (typeof parsed.duration !== "string" || typeof parsed.accountPrefix !== "string") {
+      return null;
+    }
+    return {
+      duration: parsed.duration,
+      accountPrefix: parsed.accountPrefix,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeLeaseGenerationSettings(platformId: string, settings: LeaseGenerationSettings): void {
+  try {
+    window.localStorage.setItem(leaseGenerationStorageKey(platformId), JSON.stringify(settings));
+  } catch {
+    // Storage may be unavailable in private browsing or restricted webviews.
+  }
+}
+
 export function PlatformDetailPage() {
   const { t } = useI18n();
   const { platformId = "" } = useParams();
@@ -85,6 +124,9 @@ export function PlatformDetailPage() {
   const [leaseSortBy, setLeaseSortBy] = useState<PlatformLeaseSortBy>("expiry");
   const [leaseSortOrder, setLeaseSortOrder] = useState<SortOrder>("asc");
   const [selectedLeaseAccounts, setSelectedLeaseAccounts] = useState<Set<string>>(() => new Set());
+  const [leaseGenerationDuration, setLeaseGenerationDuration] = useState("");
+  const [leaseGenerationPrefix, setLeaseGenerationPrefix] = useState("");
+  const [leaseGenerationSettingsPlatformId, setLeaseGenerationSettingsPlatformId] = useState("");
   const { toasts, showToast, dismissToast } = useToast();
   const queryClient = useQueryClient();
   const formatPlatformMutationError = (error: unknown) => {
@@ -175,7 +217,20 @@ export function PlatformDetailPage() {
     setLeaseSortBy("expiry");
     setLeaseSortOrder("asc");
     setSelectedLeaseAccounts(new Set());
+    setLeaseGenerationDuration("");
+    setLeaseGenerationPrefix("");
+    setLeaseGenerationSettingsPlatformId("");
   }, [platformId]);
+
+  useEffect(() => {
+    if (!platform || platform.id !== platformId || leaseGenerationSettingsPlatformId === platform.id) {
+      return;
+    }
+    const stored = readLeaseGenerationSettings(platform.id);
+    setLeaseGenerationDuration(stored?.duration ?? platform.sticky_ttl);
+    setLeaseGenerationPrefix(stored?.accountPrefix ?? "");
+    setLeaseGenerationSettingsPlatformId(platform.id);
+  }, [platform, platformId, leaseGenerationSettingsPlatformId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -290,6 +345,43 @@ export function PlatformDetailPage() {
       ]);
       setSelectedLeaseAccounts(new Set());
       showToast("success", t("平台 {{name}} 的所有租约已清除", { name: updated.name }));
+    },
+    onError: (error) => {
+      showToast("error", formatApiErrorMessage(error, t));
+    },
+  });
+
+  const generateLeasesMutation = useMutation({
+    mutationFn: async () => {
+      if (!platform) {
+        throw new Error("平台不存在或已被删除");
+      }
+      const duration = leaseGenerationDuration.trim();
+      const accountPrefix = leaseGenerationPrefix.trim();
+      if (!duration) {
+        throw new Error("租约保持时长不能为空");
+      }
+      if (!accountPrefix) {
+        throw new Error("账号前缀不能为空");
+      }
+      writeLeaseGenerationSettings(platform.id, {
+        duration: leaseGenerationDuration,
+        accountPrefix: leaseGenerationPrefix,
+      });
+      return generatePlatformLeasesByNode(platform.id, {
+        duration,
+        account_prefix: accountPrefix,
+      });
+    },
+    onSuccess: async (result) => {
+      if (platform) {
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["platform-monitor"] }),
+          queryClient.invalidateQueries({ queryKey: ["platform-leases", platform.id] }),
+        ]);
+      }
+      setSelectedLeaseAccounts(new Set());
+      showToast("success", t("已按 {{count}} 个节点生成租约", { count: result.generated }));
     },
     onError: (error) => {
       showToast("error", formatApiErrorMessage(error, t));
@@ -412,6 +504,10 @@ export function PlatformDetailPage() {
     await clearLeasesMutation.mutateAsync();
   };
 
+  const handleGenerateLeasesByNode = async () => {
+    await generateLeasesMutation.mutateAsync();
+  };
+
   const handleReleaseLease = async (lease: PlatformLease) => {
     const confirmed = window.confirm(t("确认释放账号 {{account}} 的租约？", { account: lease.account }));
     if (!confirmed) {
@@ -518,7 +614,11 @@ export function PlatformDetailPage() {
   const somePageLeasesSelected = pageLeaseAccounts.some((account) => selectedLeaseAccounts.has(account));
   const selectedLeaseCount = selectedLeaseAccounts.size;
   const showLeaseBulkBar = selectedLeaseCount > 0 || hasLeaseFilter;
-  const bulkBusy = bulkDeleteLeasesMutation.isPending || clearLeasesMutation.isPending || releaseLeaseMutation.isPending;
+  const bulkBusy =
+    bulkDeleteLeasesMutation.isPending ||
+    clearLeasesMutation.isPending ||
+    releaseLeaseMutation.isPending ||
+    generateLeasesMutation.isPending;
 
   const leaseColumns: ColumnDef<PlatformLease>[] = [
     {
@@ -1040,6 +1140,68 @@ export function PlatformDetailPage() {
                       >
                         <RefreshCw size={16} className={leaseQuery.isFetching ? "spin" : undefined} />
                         {t("刷新")}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="platform-lease-generator">
+                    <div className="platform-op-copy">
+                      <h5>{t("按节点生成租约")}</h5>
+                      <p className="platform-op-hint">
+                        {t("按当前可路由节点的 tag 升序生成 {{prefix}}_1、{{prefix}}_2…；重复生成会覆盖同名账号，节点减少时不会删除多余租约。", {
+                          prefix: leaseGenerationPrefix.trim() || t("前缀"),
+                        })}
+                      </p>
+                    </div>
+                    <div className="platform-lease-generator-controls">
+                      <label className="field-group platform-lease-generator-field" htmlFor="platform-lease-generation-duration">
+                        <span className="field-label">{t("租约保持时长")}</span>
+                        <Input
+                          id="platform-lease-generation-duration"
+                          placeholder={t("例如 24h")}
+                          value={leaseGenerationDuration}
+                          onChange={(event) => {
+                            const duration = event.target.value;
+                            setLeaseGenerationDuration(duration);
+                            if (platform) {
+                              writeLeaseGenerationSettings(platform.id, {
+                                duration,
+                                accountPrefix: leaseGenerationPrefix,
+                              });
+                            }
+                          }}
+                          aria-label={t("按节点生成租约的保持时长")}
+                          disabled={bulkBusy}
+                        />
+                      </label>
+                      <label className="field-group platform-lease-generator-field" htmlFor="platform-lease-generation-prefix">
+                        <span className="field-label">{t("账号前缀")}</span>
+                        <Input
+                          id="platform-lease-generation-prefix"
+                          placeholder={t("例如 user")}
+                          value={leaseGenerationPrefix}
+                          onChange={(event) => {
+                            const accountPrefix = event.target.value;
+                            setLeaseGenerationPrefix(accountPrefix);
+                            if (platform) {
+                              writeLeaseGenerationSettings(platform.id, {
+                                duration: leaseGenerationDuration,
+                                accountPrefix,
+                              });
+                            }
+                          }}
+                          aria-label={t("按节点生成租约的账号前缀")}
+                          disabled={bulkBusy}
+                        />
+                      </label>
+                      <Button
+                        size="sm"
+                        onClick={() => void handleGenerateLeasesByNode()}
+                        disabled={
+                          bulkBusy || !leaseGenerationDuration.trim() || !leaseGenerationPrefix.trim()
+                        }
+                      >
+                        {generateLeasesMutation.isPending ? t("生成中...") : t("按节点生成租约")}
                       </Button>
                     </div>
                   </div>

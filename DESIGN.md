@@ -1760,6 +1760,30 @@ Query（可选）：
 
 支持的 `sort_by`：`account`、`expiry`、`last_accessed`。默认按 `expiry` `asc` 排序。
 
+#### 按节点生成租约（Action）
+
+**POST** `/platforms/{platform_id}/leases/actions/generate-by-node`
+
+请求体：
+
+```json
+{
+  "duration": "24h",
+  "account_prefix": "user"
+}
+```
+
+行为：读取当前平台可路由节点，按节点 tag 升序（同 tag 按 node hash）编号，从 1 开始为每个节点生成 `account_prefix_排序号` 租约。已存在的同名账号会被覆盖；如果当前节点数少于上次生成的数量，只覆盖本次节点数对应的账号，尾部旧租约不删除。
+
+返回：
+
+```json
+{
+  "generated": 2,
+  "node_count": 2
+}
+```
+
 #### 获取租约
 
 **GET** `/platforms/{platform_id}/leases/{account}`

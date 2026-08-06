@@ -177,6 +177,26 @@ export async function clearAllPlatformLeases(id: string): Promise<void> {
   });
 }
 
+export type GeneratePlatformLeasesByNodeInput = {
+  duration: string;
+  account_prefix: string;
+};
+
+export type GeneratePlatformLeasesByNodeResult = {
+  generated: number;
+  node_count: number;
+};
+
+export async function generatePlatformLeasesByNode(
+  id: string,
+  input: GeneratePlatformLeasesByNodeInput,
+): Promise<GeneratePlatformLeasesByNodeResult> {
+  return apiRequest<GeneratePlatformLeasesByNodeResult>(`${basePath}/${id}/leases/actions/generate-by-node`, {
+    method: "POST",
+    body: input,
+  });
+}
+
 export type BulkDeletePlatformLeasesResult = {
   deleted: number;
   not_found: number;

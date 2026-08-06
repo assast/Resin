@@ -258,6 +258,123 @@ func TestInheritLeaseByPlatformName_Success(t *testing.T) {
 	}
 }
 
+func TestGenerateLeasesByNode_OverwritesCurrentNodesAndKeepsTrailingLeases(t *testing.T) {
+	cp, plat := newLeaseInheritanceTestService()
+	sub := subscription.NewSubscription("sub-generate", "Generate", "https://example.com/generate", true, false)
+	cp.SubMgr.Register(sub)
+
+	hashB := addRoutableNodeForSubscriptionWithTag(
+		t,
+		cp.Pool,
+		sub,
+		[]byte(`{"id":"generate-b"}`),
+		"203.0.113.31",
+		"b",
+	)
+	hashA := addRoutableNodeForSubscriptionWithTag(
+		t,
+		cp.Pool,
+		sub,
+		[]byte(`{"id":"generate-a"}`),
+		"203.0.113.30",
+		"a",
+	)
+	hashC := addRoutableNodeForSubscriptionWithTag(
+		t,
+		cp.Pool,
+		sub,
+		[]byte(`{"id":"generate-c"}`),
+		"203.0.113.32",
+		"c",
+	)
+
+	first, err := cp.GenerateLeasesByNode(plat.ID, "acct", time.Hour)
+	if err != nil {
+		t.Fatalf("GenerateLeasesByNode(first): %v", err)
+	}
+	if first.Generated != 3 || first.NodeCount != 3 {
+		t.Fatalf("first result: got %+v, want generated/node_count=3", first)
+	}
+	assertGeneratedLeaseNode := func(account string, want node.Hash) {
+		t.Helper()
+		lease := cp.Router.ReadLease(model.LeaseKey{PlatformID: plat.ID, Account: account})
+		if lease == nil {
+			t.Fatalf("missing lease %q", account)
+		}
+		if lease.NodeHash != want.Hex() {
+			t.Fatalf("lease %q node_hash: got %q, want %q", account, lease.NodeHash, want.Hex())
+		}
+	}
+	assertGeneratedLeaseNode("acct_1", hashA)
+	assertGeneratedLeaseNode("acct_2", hashB)
+	assertGeneratedLeaseNode("acct_3", hashC)
+
+	oldFirst := cp.Router.ReadLease(model.LeaseKey{PlatformID: plat.ID, Account: "acct_1"})
+	oldThird := cp.Router.ReadLease(model.LeaseKey{PlatformID: plat.ID, Account: "acct_3"})
+	if oldFirst == nil || oldThird == nil {
+		t.Fatal("expected generated leases before overwrite")
+	}
+
+	second, err := cp.GenerateLeasesByNode(plat.ID, "acct", 2*time.Hour)
+	if err != nil {
+		t.Fatalf("GenerateLeasesByNode(second): %v", err)
+	}
+	if second.Generated != 3 {
+		t.Fatalf("second generated: got %d, want 3", second.Generated)
+	}
+	newFirst := cp.Router.ReadLease(model.LeaseKey{PlatformID: plat.ID, Account: "acct_1"})
+	if newFirst == nil || newFirst.ExpiryNs <= oldFirst.ExpiryNs {
+		t.Fatalf("acct_1 was not overwritten with the new duration: old=%+v new=%+v", oldFirst, newFirst)
+	}
+	trailingThirdBeforeShrink := cp.Router.ReadLease(model.LeaseKey{PlatformID: plat.ID, Account: "acct_3"})
+	if trailingThirdBeforeShrink == nil {
+		t.Fatal("expected acct_3 lease before shrinking the node set")
+	}
+
+	cp.Pool.RemoveNodeFromSub(hashC, sub.ID)
+	if plat.View().Size() != 2 {
+		t.Fatalf("routable node count after removal: got %d, want 2", plat.View().Size())
+	}
+
+	third, err := cp.GenerateLeasesByNode(plat.ID, "acct", 3*time.Hour)
+	if err != nil {
+		t.Fatalf("GenerateLeasesByNode(third): %v", err)
+	}
+	if third.Generated != 2 || third.NodeCount != 2 {
+		t.Fatalf("third result: got %+v, want generated/node_count=2", third)
+	}
+	remainingThird := cp.Router.ReadLease(model.LeaseKey{PlatformID: plat.ID, Account: "acct_3"})
+	if remainingThird == nil {
+		t.Fatal("trailing lease acct_3 should remain after node count decreases")
+	}
+	if *remainingThird != *trailingThirdBeforeShrink {
+		t.Fatalf("trailing lease acct_3 changed after node count decrease: before=%+v after=%+v", trailingThirdBeforeShrink, remainingThird)
+	}
+}
+
+func TestGenerateLeasesByNode_ValidatesArguments(t *testing.T) {
+	cp, plat := newLeaseInheritanceTestService()
+
+	cases := []struct {
+		name   string
+		prefix string
+		ttl    time.Duration
+	}{
+		{name: "empty prefix", prefix: "  ", ttl: time.Hour},
+		{name: "non-positive duration", prefix: "acct", ttl: 0},
+		{name: "negative duration", prefix: "acct", ttl: -time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := cp.GenerateLeasesByNode(plat.ID, tc.prefix, tc.ttl)
+			if err == nil {
+				t.Fatal("expected INVALID_ARGUMENT")
+			}
+			assertServiceErrorCode(t, err, "INVALID_ARGUMENT")
+		})
+	}
+}
+
 func TestInheritLeaseByPlatformName_OverwritesExistingTargetLease(t *testing.T) {
 	cp, plat := newLeaseInheritanceTestService()
 

@@ -1,6 +1,8 @@
 package service
 
 import (
+	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -22,6 +24,12 @@ type LeaseResponse struct {
 	EgressIP     string `json:"egress_ip"`
 	Expiry       string `json:"expiry"`
 	LastAccessed string `json:"last_accessed"`
+}
+
+// GenerateLeasesByNodeResult describes a node-based lease generation run.
+type GenerateLeasesByNodeResult struct {
+	Generated int `json:"generated"`
+	NodeCount int `json:"node_count"`
 }
 
 func leaseToResponse(lease model.Lease, nodeTag string) LeaseResponse {
@@ -126,6 +134,79 @@ func (s *ControlPlaneService) InheritLeaseByPlatformName(platformName, parentAcc
 	}
 
 	return nil
+}
+
+// GenerateLeasesByNode creates one lease for each currently routable node.
+// Nodes are numbered in the same stable tag-ascending order as the node list.
+// Existing leases with generated account names are replaced; leases outside
+// the current node count are deliberately left untouched.
+func (s *ControlPlaneService) GenerateLeasesByNode(
+	platformID, accountPrefix string,
+	leaseTTL time.Duration,
+) (*GenerateLeasesByNodeResult, error) {
+	plat, ok := s.Pool.GetPlatform(platformID)
+	if !ok || plat == nil {
+		return nil, notFound("platform not found")
+	}
+
+	accountPrefix = strings.TrimSpace(accountPrefix)
+	if accountPrefix == "" {
+		return nil, invalidArg("account_prefix: must be non-empty")
+	}
+	if leaseTTL <= 0 {
+		return nil, invalidArg("duration: must be > 0")
+	}
+
+	type generationNode struct {
+		hash     node.Hash
+		tag      string
+		egressIP string
+	}
+	nodes := make([]generationNode, 0, plat.View().Size())
+	plat.View().Range(func(hash node.Hash) bool {
+		entry, ok := s.Pool.GetEntry(hash)
+		if !ok || entry == nil {
+			return true
+		}
+		egressIP := entry.GetEgressIP()
+		if !egressIP.IsValid() {
+			return true
+		}
+		nodes = append(nodes, generationNode{
+			hash:     hash,
+			tag:      s.resolveLeaseNodeTag(hash),
+			egressIP: egressIP.String(),
+		})
+		return true
+	})
+
+	sort.SliceStable(nodes, func(i, j int) bool {
+		if nodes[i].tag != nodes[j].tag {
+			return nodes[i].tag < nodes[j].tag
+		}
+		return nodes[i].hash.Hex() < nodes[j].hash.Hex()
+	})
+
+	nowNs := time.Now().UnixNano()
+	for i, candidate := range nodes {
+		account := fmt.Sprintf("%s_%d", accountPrefix, i+1)
+		if err := s.Router.UpsertLease(model.Lease{
+			PlatformID:     platformID,
+			Account:        account,
+			NodeHash:       candidate.hash.Hex(),
+			EgressIP:       candidate.egressIP,
+			CreatedAtNs:    nowNs,
+			ExpiryNs:       nowNs + leaseTTL.Nanoseconds(),
+			LastAccessedNs: nowNs,
+		}); err != nil {
+			return nil, internal("generate leases by node", err)
+		}
+	}
+
+	return &GenerateLeasesByNodeResult{
+		Generated: len(nodes),
+		NodeCount: len(nodes),
+	}, nil
 }
 
 // DeleteLease removes a single lease.

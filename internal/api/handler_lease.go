@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/Resinat/Resin/internal/service"
 )
@@ -199,6 +200,46 @@ func HandleDeleteAllLeases(cp *service.ControlPlaneService) http.HandlerFunc {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+type generateLeasesByNodeRequest struct {
+	Duration      string `json:"duration"`
+	AccountPrefix string `json:"account_prefix"`
+}
+
+// HandleGenerateLeasesByNode returns a handler for
+// POST /api/v1/platforms/{id}/leases/actions/generate-by-node.
+func HandleGenerateLeasesByNode(cp *service.ControlPlaneService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		platformID, ok := requireUUIDPathParam(w, r, "id", "platform_id")
+		if !ok {
+			return
+		}
+
+		var req generateLeasesByNodeRequest
+		if err := DecodeBody(r, &req); err != nil {
+			writeDecodeBodyError(w, err)
+			return
+		}
+
+		duration := strings.TrimSpace(req.Duration)
+		if duration == "" {
+			writeInvalidArgument(w, "duration: must be non-empty")
+			return
+		}
+		leaseTTL, err := time.ParseDuration(duration)
+		if err != nil {
+			writeInvalidArgument(w, "duration: "+err.Error())
+			return
+		}
+
+		result, err := cp.GenerateLeasesByNode(platformID, req.AccountPrefix, leaseTTL)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		WriteJSON(w, http.StatusOK, result)
 	}
 }
 

@@ -2739,6 +2739,34 @@ a {
   gap: 12px;
 }
 
+.platform-lease-generator {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px;
+  border: 1px solid rgba(20, 112, 255, 0.18);
+  border-radius: 12px;
+  background: rgba(239, 246, 255, 0.72);
+}
+
+.platform-lease-generator-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.platform-lease-generator-field {
+  width: 150px;
+  margin: 0;
+}
+
+.platform-lease-generator-field .field-label {
+  margin-bottom: 4px;
+}
+
 .platform-lease-head {
   display: flex;
   flex-direction: row;
@@ -2871,6 +2899,21 @@ a {
   width: var(--platform-op-btn-width);
   max-width: 100%;
   flex-shrink: 0;
+}
+
+@media (max-width: 760px) {
+  .platform-lease-generator {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .platform-lease-generator-controls {
+    align-items: stretch;
+  }
+
+  .platform-lease-generator-field {
+    flex: 1 1 140px;
+  }
 }
 
 @keyframes drawer-in {
